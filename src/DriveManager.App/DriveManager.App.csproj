@@ -5,6 +5,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Self-contained, dependency-free deployment so the app can run from its own
+         protected NVMe partition without any .NET runtime installed on the machine. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <!-- Single-file + Avalonia/LLamaSharp natives hangs at extract; ship a self-contained folder instead. -->
+    <PublishSingleFile>false</PublishSingleFile>
+    <!-- Trimming is disabled: Avalonia + reflection-based MVVM are not trim-safe. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>

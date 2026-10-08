@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DriveManager.App.Views.SummaryPopup"
+        Width="640" Height="480"
+        MinWidth="420" MinHeight="280"
+        WindowStartupLocation="CenterOwner"
+        RequestedThemeVariant="Dark"
+        Background="#0D1117"
+        Foreground="#E6EDF3"
+        CanResize="True">
+    <DockPanel Margin="16">
+        <Button DockPanel.Dock="Bottom" Content="Close" HorizontalAlignment="Right" Margin="0,12,0,0"
+                Click="OnClose" Classes="accent" />
+        <ScrollViewer>
+            <SelectableTextBlock Name="BodyText" TextWrapping="Wrap" FontSize="13" />
+        </ScrollViewer>
+    </DockPanel>
+</Window>

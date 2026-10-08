@@ -1,5 +1,16 @@
 namespace DriveManager.Core.Models;
 
+/// <summary>How a preview's steps are executed once confirmed.</summary>
+public enum ExecutionRunner
+{
+    /// <summary>Not executable (preview only).</summary>
+    None,
+    /// <summary>Steps are PowerShell commands.</summary>
+    PowerShell,
+    /// <summary>Steps are diskpart script lines.</summary>
+    Diskpart,
+}
+
 /// <summary>
 /// A dry-run description of a destructive operation (format, partition, secure erase).
 /// Nothing is executed until the user confirms with a matching token.
@@ -18,6 +29,12 @@ public sealed record OperationPreview
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
     public bool IsDestructive { get; init; } = true;
+
+    /// <summary>
+    /// How <see cref="Steps"/> are run on confirmation. <see cref="ExecutionRunner.None"/> means
+    /// the operation is preview-only (not wired for execution).
+    /// </summary>
+    public ExecutionRunner Runner { get; init; } = ExecutionRunner.None;
 
     /// <summary>
     /// The phrase the user must type to confirm. Defaults to the target disk identity so

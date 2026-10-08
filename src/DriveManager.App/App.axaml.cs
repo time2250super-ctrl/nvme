@@ -25,13 +25,21 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var vm = Services.GetRequiredService<DashboardViewModel>();
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = vm,
-            };
+            var window = new MainWindow { DataContext = vm };
+            desktop.MainWindow = window;
 
-            // Kick off the first scan once the window is up.
-            vm.RefreshCommand.Execute(null);
+            window.Opened += async (_, _) =>
+            {
+                try
+                {
+                    if (vm.RefreshCommand.CanExecute(null))
+                        await vm.RefreshCommand.ExecuteAsync(null);
+                }
+                catch (Exception ex)
+                {
+                    vm.Status = "Scan failed: " + ex.Message;
+                }
+            };
         }
 
         base.OnFrameworkInitializationCompleted();

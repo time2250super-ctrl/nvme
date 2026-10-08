@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/DriveManager.Ai/DriveManager.Ai.csproj" />
     <Project Path="src/DriveManager.App/DriveManager.App.csproj" />
+    <Project Path="src/DriveManager.Installer/DriveManager.Installer.csproj" />
     <Project Path="src/DriveManager.Core/DriveManager.Core.csproj" />
     <Project Path="src/DriveManager.Platform.Windows/DriveManager.Platform.Windows.csproj" />
   </Folder>

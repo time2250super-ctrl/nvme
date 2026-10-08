@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DriveManager.Ai;
@@ -18,8 +19,16 @@ public partial class DashboardViewModel : ViewModelBase
     private readonly IHealthAnalyzer _analyzer;
     private readonly ITelemetryStore? _telemetry;
     private readonly IDriveToolsService? _tools;
+    private readonly IFormatService? _formatService;
+    private readonly ISecurityService? _securityService;
+    private readonly IModelManager? _models;
+    private readonly IChatAssistant? _chat;
+    private readonly IPermissionManager? _permissions;
 
     private DriveOperation? _pendingOperation;
+
+    private OperationPreview? _pendingDestructive;
+    private Func<OperationPreview, string, CancellationToken, Task>? _pendingDestructiveExec;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -65,23 +74,119 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty]
     private string _confirmationInput = string.Empty;
 
+    // --- Danger zone (destructive) ---
+    [ObservableProperty]
+    private string _selectedFileSystem = "Ntfs";
+
+    [ObservableProperty]
+    private string _formatLabel = "DATA";
+
+    [ObservableProperty]
+    private string _dangerPreview = string.Empty;
+
+    [ObservableProperty]
+    private string _dangerConfirmation = string.Empty;
+
+    [ObservableProperty]
+    private string _dangerStatus = "Select a disk, then build a preview. Destructive actions require typing the exact confirmation phrase.";
+
+    [ObservableProperty]
+    private string _dangerConfirmHint = string.Empty;
+
+    // --- Security / encryption ---
+    [ObservableProperty]
+    private VolumeSecurityState? _security;
+
+    [ObservableProperty]
+    private string _encPreview = string.Empty;
+
+    [ObservableProperty]
+    private string _encConfirmHint = string.Empty;
+
+    [ObservableProperty]
+    private string _encConfirmation = string.Empty;
+
+    [ObservableProperty]
+    private string _encStatus = "Select a volume to view its encryption status.";
+
+    private OperationPreview? _pendingEncryption;
+
+    // --- AI model / local chat ---
+    [ObservableProperty]
+    private AiModelInfo? _activeModel;
+
+    [ObservableProperty]
+    private AiModelInfo? _selectedModel;
+
+    [ObservableProperty]
+    private string _modelImportPath = string.Empty;
+
+    [ObservableProperty]
+    private string _modelDownloadUrl = string.Empty;
+
+    [ObservableProperty]
+    private double _modelProgress;
+
+    [ObservableProperty]
+    private bool _isModelBusy;
+
+    [ObservableProperty]
+    private string _modelStatus = "No model folder scanned yet.";
+
+    [ObservableProperty]
+    private string _chatPrompt = string.Empty;
+
+    [ObservableProperty]
+    private string _chatOutput = string.Empty;
+
+    [ObservableProperty]
+    private bool _isChatBusy;
+
     public ObservableCollection<PhysicalDiskInfo> Disks { get; } = [];
     public ObservableCollection<DriveHealthInfo> History { get; } = [];
+    public ObservableCollection<FsAdviceRow> FsAdvice { get; } = [];
+    public ObservableCollection<AiModelInfo> Models { get; } = [];
+    public ObservableCollection<string> FileSystemOptions { get; } = ["Ntfs", "ExFat", "Fat32"];
+    public ObservableCollection<PermissionItem> PermissionItems { get; } = [];
+
+    [ObservableProperty]
+    private string _permissionSummary = "Permissions not checked yet.";
+
+    [ObservableProperty]
+    private bool _isElevated;
 
     public bool ToolsAvailable => _tools is { IsSupported: true };
+    public bool AiAvailable => _models is not null;
+    public string ModelsDirectory => _models?.ModelsDirectory ?? "(unavailable)";
+
+    public event Action<string, string>? PopupRequested;
+
+    private void ShowPopup(string title, string body)
+        => PopupRequested?.Invoke(title, body);
 
     public DashboardViewModel(
         IHealthAnalyzer analyzer,
         IDiskService? diskService = null,
         IHealthService? healthService = null,
         ITelemetryStore? telemetry = null,
-        IDriveToolsService? tools = null)
+        IDriveToolsService? tools = null,
+        IFormatService? formatService = null,
+        ISecurityService? securityService = null,
+        IModelManager? models = null,
+        IChatAssistant? chat = null,
+        IPermissionManager? permissions = null)
     {
         _analyzer = analyzer;
         _diskService = diskService;
         _healthService = healthService;
         _telemetry = telemetry;
         _tools = tools;
+        _formatService = formatService;
+        _securityService = securityService;
+        _models = models;
+        _chat = chat;
+        _permissions = permissions;
+        RefreshModels();
     }
 
     /// <summary>Design-time / fallback constructor.</summary>
@@ -102,15 +207,19 @@ public partial class DashboardViewModel : ViewModelBase
         {
             IsBusy = true;
             Status = "Scanning disks...";
-            var disks = await _diskService.GetDisksAsync();
+            var disks = await _diskService.GetDisksAsync().ConfigureAwait(false);
 
-            Disks.Clear();
-            foreach (var d in disks)
-                Disks.Add(d);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                Disks.Clear();
+                foreach (var d in disks)
+                    Disks.Add(d);
 
-            // Prefer the NVMe device (the SPCC SSD) as the default selection.
-            SelectedDisk = Disks.FirstOrDefault(d => d.IsNvme) ?? Disks.FirstOrDefault();
-            Status = $"Found {Disks.Count} disk(s).";
+                SelectedDisk = Disks.FirstOrDefault();
+                Status = $"Found {Disks.Count} disk(s).";
+            });
+            if (_permissions is not null)
+                _ = ApplyPermissionsAsync();
         }
         catch (Exception ex)
         {
@@ -119,6 +228,33 @@ public partial class DashboardViewModel : ViewModelBase
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyPermissionsAsync()
+    {
+        if (_permissions is null)
+        {
+            PermissionSummary = "Permission manager unavailable on this platform.";
+            return;
+        }
+
+        try
+        {
+            await _permissions.ApplyAsync().ConfigureAwait(false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                PermissionItems.Clear();
+                foreach (var item in _permissions.Items)
+                    PermissionItems.Add(item);
+                PermissionSummary = _permissions.Summary;
+                IsElevated = _permissions.IsElevated;
+            });
+        }
+        catch (Exception ex)
+        {
+            PermissionSummary = "Permission check failed: " + ex.Message;
         }
     }
 
@@ -134,8 +270,55 @@ public partial class DashboardViewModel : ViewModelBase
         ToolsPreview = string.Empty;
         ConfirmationHint = string.Empty;
         _pendingOperation = null;
+        DangerPreview = string.Empty;
+        DangerConfirmHint = string.Empty;
+        DangerConfirmation = string.Empty;
+        _pendingDestructive = null;
+        _pendingDestructiveExec = null;
+
+        // Recommend the best filesystem for each volume on this disk.
+        FsAdvice.Clear();
         if (value is not null)
+        {
+            var sysOrBoot = value.IsSystem || value.IsBoot;
+            foreach (var vol in value.Volumes)
+            {
+                var advice = FilesystemAdvisor.Recommend(value.BusType, vol.SizeBytes, sysOrBoot);
+                FsAdvice.Add(new FsAdviceRow(
+                    vol.DriveLetter, vol.FileSystem, advice.Recommended, advice.Rationale,
+                    advice.MatchesCurrent(vol.FileSystem)));
+            }
             _ = LoadHealthAsync(value);
+        }
+    }
+
+    partial void OnSelectedVolumeChanged(VolumeInfo? value)
+    {
+        _pendingEncryption = null;
+        EncPreview = string.Empty;
+        EncConfirmHint = string.Empty;
+        EncConfirmation = string.Empty;
+        Security = null;
+        if (value?.DriveLetter is char letter)
+            _ = LoadSecurityAsync(letter);
+        else
+            EncStatus = "This volume has no drive letter to inspect.";
+    }
+
+    [RelayCommand]
+    private async Task LoadSecurityAsync(char letter)
+    {
+        if (_securityService is null) { EncStatus = "Security service unavailable."; return; }
+        try
+        {
+            EncStatus = $"Reading encryption status of {letter}:...";
+            Security = await _securityService.GetEncryptionStateAsync(letter);
+            EncStatus = Security.Summary;
+        }
+        catch (Exception ex)
+        {
+            EncStatus = "Error reading encryption status: " + ex.Message;
+        }
     }
 
     private static string DiskKey(PhysicalDiskInfo d)
@@ -321,5 +504,433 @@ public partial class DashboardViewModel : ViewModelBase
             ? string.Empty
             : $"Type to confirm:  {p.ConfirmationPhrase}";
         ToolsStatus = "Preview ready. Review, then Apply.";
+        ShowPopup("Tools preview", ToolsPreview);
     }
+
+    // --- Danger zone commands (destructive, fully guarded) --------------------
+
+    private FileSystemType ParseFileSystem() => SelectedFileSystem switch
+    {
+        "ExFat" => FileSystemType.ExFat,
+        "Fat32" => FileSystemType.Fat32,
+        _ => FileSystemType.Ntfs,
+    };
+
+    [RelayCommand]
+    private void PreviewQuickFormat()
+    {
+        if (SelectedDisk is null || _formatService is null) { DangerStatus = "Select a disk first."; return; }
+        if (SelectedVolume?.DriveLetter is not char letter) { DangerStatus = "Select a volume with a drive letter in the Tools tab first."; return; }
+        var preview = _formatService.PreviewQuickFormat(SelectedDisk, letter, ParseFileSystem(), FormatLabel ?? string.Empty);
+        SetDestructive(preview, (p, c, ct) => _formatService.ExecuteAsync(p, c, ct));
+    }
+
+    [RelayCommand]
+    private void PreviewRepartition()
+    {
+        if (SelectedDisk is null || _formatService is null) { DangerStatus = "Select a disk first."; return; }
+        // Single full-size GPT partition.
+        var preview = _formatService.PreviewRepartition(SelectedDisk, [SelectedDisk.SizeBytes], ParseFileSystem());
+        SetDestructive(preview, (p, c, ct) => _formatService.ExecuteAsync(p, c, ct));
+    }
+
+    [RelayCommand]
+    private void PreviewSecureErase()
+    {
+        if (SelectedDisk is null || _securityService is null) { DangerStatus = "Select a disk first."; return; }
+        var preview = _securityService.PreviewSecureErase(SelectedDisk);
+        SetDestructive(preview, (p, c, ct) => _securityService.ExecuteAsync(p, c, ct));
+    }
+
+    [RelayCommand]
+    private void CancelDestructive()
+    {
+        _pendingDestructive = null;
+        _pendingDestructiveExec = null;
+        DangerPreview = string.Empty;
+        DangerConfirmHint = string.Empty;
+        DangerConfirmation = string.Empty;
+        DangerStatus = "Cancelled.";
+    }
+
+    [RelayCommand]
+    private async Task ExecuteDestructiveAsync()
+    {
+        if (_pendingDestructive is null || _pendingDestructiveExec is null)
+        {
+            DangerStatus = "Nothing to execute. Build a preview first.";
+            return;
+        }
+
+        var preview = _pendingDestructive;
+        if (preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase)))
+        {
+            DangerStatus = "This operation is blocked by safety rules and will not run.";
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            DangerStatus = $"Executing: {preview.Title} ... (this can take a while)";
+            await _pendingDestructiveExec(preview, DangerConfirmation, default);
+            DangerStatus = $"COMPLETED: {preview.Title}.";
+            _pendingDestructive = null;
+            _pendingDestructiveExec = null;
+            DangerPreview = string.Empty;
+            DangerConfirmHint = string.Empty;
+            DangerConfirmation = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            DangerStatus = "FAILED: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void SetDestructive(OperationPreview preview, Func<OperationPreview, string, CancellationToken, Task> exec)
+    {
+        _pendingDestructive = preview;
+        _pendingDestructiveExec = exec;
+
+        var steps = string.Join(Environment.NewLine, preview.Steps);
+        var warns = preview.Warnings.Count > 0
+            ? Environment.NewLine + "! " + string.Join(Environment.NewLine + "! ", preview.Warnings)
+            : string.Empty;
+        DangerPreview = $"{preview.Title}{Environment.NewLine}{preview.Description}{Environment.NewLine}{Environment.NewLine}{steps}{warns}";
+        DangerConfirmHint = $"To execute, type EXACTLY:  {preview.ConfirmationPhrase}";
+
+        var blocked = preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase));
+        DangerStatus = blocked
+            ? "This target is protected (system/boot disk). Execution is blocked."
+            : "DANGER: review carefully. Type the confirmation phrase, then Execute.";
+        ShowPopup("Destructive preview", DangerPreview);
+    }
+
+    // --- Encryption commands (BitLocker, confirmation-gated) ------------------
+
+    [RelayCommand]
+    private void PreviewEnableEncryption()
+    {
+        if (_securityService is null || SelectedVolume?.DriveLetter is not char letter)
+        { EncStatus = "Select a volume with a drive letter first."; return; }
+        SetEncryptionPreview(_securityService.PreviewEnableEncryption(letter));
+    }
+
+    [RelayCommand]
+    private void PreviewDisableEncryption()
+    {
+        if (_securityService is null || SelectedVolume?.DriveLetter is not char letter)
+        { EncStatus = "Select a volume with a drive letter first."; return; }
+        SetEncryptionPreview(_securityService.PreviewDisableEncryption(letter));
+    }
+
+    [RelayCommand]
+    private void CancelEncryption()
+    {
+        _pendingEncryption = null;
+        EncPreview = string.Empty;
+        EncConfirmHint = string.Empty;
+        EncConfirmation = string.Empty;
+        EncStatus = "Cancelled.";
+    }
+
+    [RelayCommand]
+    private async Task ExecuteEncryptionAsync()
+    {
+        if (_pendingEncryption is null || _securityService is null)
+        { EncStatus = "Build an encryption preview first."; return; }
+
+        var preview = _pendingEncryption;
+        try
+        {
+            IsBusy = true;
+            EncStatus = $"Applying: {preview.Title}... (this can take a while)";
+            await _securityService.ExecuteEncryptionAsync(preview, EncConfirmation);
+            _pendingEncryption = null;
+            EncPreview = string.Empty;
+            EncConfirmHint = string.Empty;
+            EncConfirmation = string.Empty;
+            if (SelectedVolume?.DriveLetter is char letter)
+                await LoadSecurityAsync(letter);
+            EncStatus = $"Done: {preview.Title}. {(Security?.Summary ?? string.Empty)}";
+        }
+        catch (Exception ex)
+        {
+            EncStatus = "Failed: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void SetEncryptionPreview(OperationPreview preview)
+    {
+        _pendingEncryption = preview;
+        var steps = string.Join(Environment.NewLine, preview.Steps);
+        var warns = preview.Warnings.Count > 0
+            ? Environment.NewLine + "! " + string.Join(Environment.NewLine + "! ", preview.Warnings)
+            : string.Empty;
+        EncPreview = $"{preview.Title}{Environment.NewLine}{preview.Description}{Environment.NewLine}{Environment.NewLine}{steps}{warns}";
+        EncConfirmHint = $"To proceed, type EXACTLY:  {preview.ConfirmationPhrase}";
+        EncStatus = "Review, type the confirmation phrase, then Apply.";
+        ShowPopup("Encryption preview", EncPreview);
+    }
+
+    // --- AI model management + local chat -------------------------------------
+
+    [RelayCommand]
+    private void RefreshModels()
+    {
+        if (_models is null) { ModelStatus = "AI model manager unavailable."; return; }
+        try
+        {
+            var list = _models.ListModels();
+            Models.Clear();
+            foreach (var m in list) Models.Add(m);
+            ActiveModel = _models.ActiveModel;
+            SelectedModel = ActiveModel ?? Models.FirstOrDefault();
+            ModelStatus = Models.Count == 0
+                ? $"No models found in {_models.ModelsDirectory}. Download or import a .gguf file to begin."
+                : ActiveModel is null
+                    ? $"{Models.Count} model(s) found. Select one and set it active."
+                    : $"Active model: {ActiveModel.Name} ({ActiveModel.SizeDisplay}). {Models.Count} model(s) available.";
+        }
+        catch (Exception ex)
+        {
+            ModelStatus = "Error scanning models: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private void SetActiveModel()
+    {
+        if (_models is null || SelectedModel is null) { ModelStatus = "Select a model first."; return; }
+        _models.SetActive(SelectedModel.FilePath);
+        RefreshModels();
+        ModelStatus = $"Active model set to {SelectedModel?.Name ?? "(none)"}.";
+    }
+
+    [RelayCommand]
+    private async Task ImportModelAsync()
+    {
+        if (_models is null) { ModelStatus = "AI model manager unavailable."; return; }
+        var path = ModelImportPath?.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(path)) { ModelStatus = "Enter the full path to a .gguf file to import."; return; }
+        try
+        {
+            IsModelBusy = true;
+            ModelProgress = 0;
+            ModelStatus = $"Importing {System.IO.Path.GetFileName(path)}...";
+            var progress = new Progress<ModelTransferProgress>(p => ModelProgress = p.Percent);
+            var model = await _models.ImportAsync(path, progress);
+            ModelImportPath = string.Empty;
+            RefreshModels();
+            ModelStatus = $"Imported {model.Name} ({model.SizeDisplay}) and set active.";
+        }
+        catch (Exception ex)
+        {
+            ModelStatus = "Import failed: " + ex.Message;
+        }
+        finally
+        {
+            IsModelBusy = false;
+            ModelProgress = 0;
+        }
+    }
+
+    [RelayCommand]
+    private async Task DownloadModelAsync()
+    {
+        if (_models is null) { ModelStatus = "AI model manager unavailable."; return; }
+        var raw = ModelDownloadUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw, UriKind.Absolute, out var url)
+            || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
+        {
+            ModelStatus = "Enter a valid http(s) URL to a .gguf model.";
+            return;
+        }
+        try
+        {
+            IsModelBusy = true;
+            ModelProgress = 0;
+            ModelStatus = "Downloading model... this can take a while for multi-GB files.";
+            var progress = new Progress<ModelTransferProgress>(p =>
+            {
+                ModelProgress = p.Percent;
+                if (p.TotalBytes is long t)
+                    ModelStatus = $"Downloading... {p.BytesTransferred / 1024d / 1024d:0} MB of {t / 1024d / 1024d:0} MB ({p.Percent:0}%)";
+                else
+                    ModelStatus = $"Downloading... {p.BytesTransferred / 1024d / 1024d:0} MB";
+            });
+            var model = await _models.DownloadAsync(url, null, progress);
+            ModelDownloadUrl = string.Empty;
+            RefreshModels();
+            ModelStatus = $"Downloaded {model.Name} ({model.SizeDisplay}) and set active.";
+        }
+        catch (Exception ex)
+        {
+            ModelStatus = "Download failed: " + ex.Message;
+        }
+        finally
+        {
+            IsModelBusy = false;
+            ModelProgress = 0;
+        }
+    }
+
+    [RelayCommand]
+    private void DeleteModel()
+    {
+        if (_models is null || SelectedModel is null) { ModelStatus = "Select a model to delete."; return; }
+        try
+        {
+            var name = SelectedModel.Name;
+            _models.Delete(SelectedModel.FilePath);
+            RefreshModels();
+            ModelStatus = $"Deleted {name}.";
+        }
+        catch (Exception ex)
+        {
+            ModelStatus = "Delete failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task AskChatAsync()
+    {
+        if (_chat is null) { ChatOutput = "Chat assistant unavailable."; return; }
+        var prompt = ChatPrompt?.Trim();
+        if (string.IsNullOrWhiteSpace(prompt)) return;
+
+        try
+        {
+            IsChatBusy = true;
+            ChatOutput = $"You: {prompt}\n\nAssistant: ";
+            var context = new ChatContext { DriveStateSummary = BuildDriveStateSummary() };
+            await foreach (var token in _chat.AskAsync(prompt, context))
+                ChatOutput += token;
+            ChatPrompt = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            ChatOutput += "\n\n[error: " + ex.Message + "]";
+        }
+        finally
+        {
+            IsChatBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ShowDiskSummary()
+        => ShowPopup("Disk summary", FormatDiskSummary());
+
+    [RelayCommand]
+    private void ShowHealthSummary()
+        => ShowPopup("Health summary", FormatHealthSummary());
+
+    [RelayCommand]
+    private void ShowFsSummary()
+        => ShowPopup("Filesystem summary", FormatFsSummary());
+
+    [RelayCommand]
+    private void ShowHistorySummary()
+        => ShowPopup("History summary", string.IsNullOrWhiteSpace(TrendSummary) ? "No history yet. Read health to record a snapshot." : TrendSummary);
+
+    [RelayCommand]
+    private void ShowEncryptionSummary()
+        => ShowPopup("Encryption summary", Security?.Summary ?? EncStatus);
+
+    private string FormatDiskSummary()
+    {
+        if (SelectedDisk is null) return "No disk selected.";
+        var d = SelectedDisk;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(d.FriendlyName);
+        sb.AppendLine($"Disk {d.Number}  {d.BusType}  {d.SizeGb:0.00} GB  {d.PartitionStyle}");
+        sb.AppendLine($"Serial: {d.SerialNumber ?? "(none)"}");
+        sb.AppendLine($"Boot={d.IsBoot}  System={d.IsSystem}");
+        sb.AppendLine();
+        foreach (var v in d.Volumes)
+        {
+            sb.AppendLine($"Volume {v.DriveLetter}: {v.Label} ({v.FileSystem})");
+            sb.AppendLine($"  {v.UsedGb:0.00} GB used / {v.FreeGb:0.00} GB free / {v.SizeGb:0.00} GB");
+        }
+        sb.AppendLine();
+        sb.Append(FormatFsSummary());
+        return sb.ToString();
+    }
+
+    private string FormatHealthSummary()
+    {
+        if (SelectedHealth is null) return "No health data yet. Click Read health.";
+        var h = SelectedHealth;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Source: {h.Source}");
+        sb.AppendLine($"Status: {h.HealthStatus}   Predict failure: {h.PredictFailure}");
+        sb.AppendLine($"Temperature: {h.TemperatureCelsius} C");
+        sb.AppendLine($"Life used: {h.PercentageUsed}%   Spare: {h.AvailableSpare}%");
+        sb.AppendLine($"Written: {h.TerabytesWritten} TB   Read: {h.TerabytesRead} TB");
+        sb.AppendLine($"Power-on: {h.PowerOnHours} h   Cycles: {h.PowerCycles}");
+        sb.AppendLine($"Unsafe shutdowns: {h.UnsafeShutdowns}   Media errors: {h.MediaErrors}");
+        sb.AppendLine($"Read errors: {h.ReadErrorsTotal}   Write errors: {h.WriteErrorsTotal}");
+        if (Assessment is { } a)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"AI assessment: {a.Level}  risk {a.RiskScore}/100");
+            sb.AppendLine(a.Summary);
+            if (a.Findings.Count > 0)
+            {
+                sb.AppendLine("Findings:");
+                foreach (var f in a.Findings) sb.AppendLine("  - " + f);
+            }
+            if (a.Recommendations.Count > 0)
+            {
+                sb.AppendLine("Recommendations:");
+                foreach (var r in a.Recommendations) sb.AppendLine("  - " + r);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private string FormatFsSummary()
+    {
+        if (FsAdvice.Count == 0) return "No filesystem advice yet. Select a disk.";
+        var sb = new System.Text.StringBuilder();
+        foreach (var row in FsAdvice)
+        {
+            sb.AppendLine($"{row.Header}  current={row.Current ?? "?"}  {row.Verdict}");
+            sb.AppendLine("  " + row.Rationale);
+        }
+        return sb.ToString();
+    }
+
+    private string BuildDriveStateSummary()
+    {
+        if (SelectedDisk is null) return "No disk selected.";
+        var d = SelectedDisk;
+        var parts = new System.Text.StringBuilder();
+        parts.Append($"Disk {d.Number}: {d.FriendlyName}, bus {d.BusType}, {d.SizeBytes / 1024d / 1024d / 1024d:0.0} GB.");
+        if (SelectedHealth is { } h)
+        {
+            if (h.TemperatureCelsius is double t) parts.Append($" Temp {t:0.#}C.");
+            if (h.PercentageUsed is int pu) parts.Append($" Wear {pu}% used.");
+            if (h.HealthStatus is string hs) parts.Append($" Status {hs}.");
+        }
+        if (Assessment is { } a) parts.Append($" Risk {a.RiskScore}/100 ({a.Level}).");
+        return parts.ToString();
+    }
+}
+
+/// <summary>A per-volume filesystem recommendation row for display.</summary>
+public sealed record FsAdviceRow(char? Letter, string? Current, string Recommended, string Rationale, bool Matches)
+{
+    public string Header => Letter is null ? "(no letter)" : $"{Letter}:";
+    public string Verdict => Matches ? "OK - already optimal" : $"Suggest: {Recommended}";
 }

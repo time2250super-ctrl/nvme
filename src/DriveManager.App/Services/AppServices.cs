@@ -19,14 +19,15 @@ public static class AppServices
     {
         var services = new ServiceCollection();
 
-        // AI (platform independent).
+        // AI (platform independent). Models live in a portable "models" folder next to the exe.
         services.AddSingleton<IHealthAnalyzer, RuleBasedHealthAnalyzer>();
-        services.AddSingleton<IChatAssistant, PlaceholderChatAssistant>();
+        var modelsDir = Path.Combine(AppContext.BaseDirectory, "models");
+        services.AddSingleton<IModelManager>(_ => new LocalModelManager(modelsDir));
+        services.AddSingleton<IChatAssistant, LlamaChatAssistant>();
 
-        // Telemetry history (SQLite, local, non-destructive).
-        var dbPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DriveManager", "telemetry.db");
+        // Telemetry history (SQLite). Portable: stored next to the executable so the whole app
+        // can live and run from its own dedicated NVMe partition with no external dependencies.
+        var dbPath = Path.Combine(AppContext.BaseDirectory, "data", "telemetry.db");
         services.AddSingleton<ITelemetryStore>(_ => new SqliteTelemetryStore(dbPath));
 
         // Platform services.
@@ -37,6 +38,7 @@ public static class AppServices
             services.AddSingleton<IFormatService, WindowsFormatService>();
             services.AddSingleton<ISecurityService, WindowsSecurityService>();
             services.AddSingleton<IDriveToolsService, WindowsDriveToolsService>();
+            services.AddSingleton<IPermissionManager, WindowsPermissionManager>();
         }
 
         // View models.
