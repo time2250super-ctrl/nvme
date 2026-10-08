@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+
+# .NET
+project.lock.json
+*.binlog
+
+# Cursor workspace internals
+canvases/
+mcps/
+
+# Logs / scratch
+*.log
+
+# OS
+Thumbs.db
+.DS_Store

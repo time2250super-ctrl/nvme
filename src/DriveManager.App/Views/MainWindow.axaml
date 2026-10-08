@@ -1,0 +1,193 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DriveManager.App.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="980" d:DesignHeight="620"
+        x:Class="DriveManager.App.Views.MainWindow"
+        x:DataType="vm:DashboardViewModel"
+        Width="980" Height="620"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="NVMe Drive Manager">
+
+    <Design.DataContext>
+        <vm:DashboardViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+
+        <!-- Header -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="NVMe Drive Manager" FontSize="22" FontWeight="Bold" />
+                <TextBlock Text="Health, formatting and security for your SPCC NVMe SSD"
+                           Opacity="0.7" FontSize="13" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="Rescan"
+                    VerticalAlignment="Center"
+                    Command="{Binding RefreshCommand}"
+                    IsEnabled="{Binding !IsBusy}" />
+        </Grid>
+
+        <!-- Master / detail -->
+        <Grid Grid.Row="1" ColumnDefinitions="320,*" >
+
+            <!-- Disk list -->
+            <Border Grid.Column="0" BorderBrush="#33808080" BorderThickness="1"
+                    CornerRadius="6" Padding="4" Margin="0,0,10,0">
+                <ListBox ItemsSource="{Binding Disks}"
+                         SelectedItem="{Binding SelectedDisk}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="4">
+                                <TextBlock Text="{Binding FriendlyName}" FontWeight="SemiBold" />
+                                <TextBlock FontSize="12" Opacity="0.7">
+                                    <Run Text="Disk" />
+                                    <Run Text="{Binding Number}" />
+                                    <Run Text="  -  " />
+                                    <Run Text="{Binding BusType}" />
+                                    <Run Text="  -  " />
+                                    <Run Text="{Binding SizeGb}" />
+                                    <Run Text=" GB" />
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <!-- Detail -->
+            <ScrollViewer Grid.Column="1">
+                <StackPanel Spacing="12">
+
+                    <!-- Selected disk summary -->
+                    <Border BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12"
+                            IsVisible="{Binding SelectedDisk, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{Binding SelectedDisk.FriendlyName}" FontSize="17" FontWeight="Bold" />
+                            <TextBlock>
+                                <Run Text="Serial:" FontWeight="SemiBold" />
+                                <Run Text="{Binding SelectedDisk.SerialNumber}" />
+                            </TextBlock>
+                            <TextBlock>
+                                <Run Text="Bus:" FontWeight="SemiBold" />
+                                <Run Text="{Binding SelectedDisk.BusType}" />
+                                <Run Text="   Partitioning:" FontWeight="SemiBold" />
+                                <Run Text="{Binding SelectedDisk.PartitionStyle}" />
+                                <Run Text="   Size:" FontWeight="SemiBold" />
+                                <Run Text="{Binding SelectedDisk.SizeGb}" />
+                                <Run Text=" GB" />
+                            </TextBlock>
+
+                            <ItemsControl ItemsSource="{Binding SelectedDisk.Volumes}" Margin="0,6,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Margin="0,2">
+                                            <Run Text="Volume" FontWeight="SemiBold" />
+                                            <Run Text="{Binding DriveLetter}" />
+                                            <Run Text=": " />
+                                            <Run Text="{Binding Label}" />
+                                            <Run Text=" (" />
+                                            <Run Text="{Binding FileSystem}" />
+                                            <Run Text=") - " />
+                                            <Run Text="{Binding UsedGb}" />
+                                            <Run Text=" / " />
+                                            <Run Text="{Binding SizeGb}" />
+                                            <Run Text=" GB used" />
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Health -->
+                    <Border BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="NVMe Health (SMART)" FontSize="15" FontWeight="Bold" />
+                                <Button Grid.Column="1" Content="Read health"
+                                        Command="{Binding LoadHealthCommand}"
+                                        CommandParameter="{Binding SelectedDisk}"
+                                        IsEnabled="{Binding !IsBusy}" />
+                            </Grid>
+
+                            <StackPanel IsVisible="{Binding SelectedHealth, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                        Spacing="2">
+                                <TextBlock>
+                                    <Run Text="Temperature:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.TemperatureCelsius}" />
+                                    <Run Text=" C" />
+                                </TextBlock>
+                                <TextBlock>
+                                    <Run Text="Life used:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.PercentageUsed}" />
+                                    <Run Text="%   Available spare:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.AvailableSpare}" />
+                                    <Run Text="%" />
+                                </TextBlock>
+                                <TextBlock>
+                                    <Run Text="Data written:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.TerabytesWritten}" />
+                                    <Run Text=" TB   Data read:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.TerabytesRead}" />
+                                    <Run Text=" TB" />
+                                </TextBlock>
+                                <TextBlock>
+                                    <Run Text="Power-on hours:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.PowerOnHours}" />
+                                    <Run Text="   Power cycles:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.PowerCycles}" />
+                                </TextBlock>
+                                <TextBlock>
+                                    <Run Text="Unsafe shutdowns:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.UnsafeShutdowns}" />
+                                    <Run Text="   Media errors:" FontWeight="SemiBold" />
+                                    <Run Text="{Binding SelectedHealth.MediaErrors}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- AI assessment -->
+                    <Border BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12"
+                            IsVisible="{Binding Assessment, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="AI Health Assessment" FontSize="15" FontWeight="Bold" />
+                            <TextBlock>
+                                <Run Text="Risk score:" FontWeight="SemiBold" />
+                                <Run Text="{Binding Assessment.RiskScore}" />
+                                <Run Text="/100   (" />
+                                <Run Text="{Binding Assessment.Level}" />
+                                <Run Text=")" />
+                            </TextBlock>
+                            <TextBlock Text="{Binding Assessment.Summary}" TextWrapping="Wrap" />
+                            <TextBlock Text="Findings" FontWeight="SemiBold" Margin="0,4,0,0" />
+                            <ItemsControl ItemsSource="{Binding Assessment.Findings}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="8,1" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Recommendations" FontWeight="SemiBold" Margin="0,4,0,0" />
+                            <ItemsControl ItemsSource="{Binding Assessment.Recommendations}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="8,1" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="2" Background="#22808080" CornerRadius="4" Padding="8,4" Margin="0,10,0,0">
+            <TextBlock Text="{Binding Status}" />
+        </Border>
+    </Grid>
+</Window>

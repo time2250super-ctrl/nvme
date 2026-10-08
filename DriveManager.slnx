@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DriveManager.Ai/DriveManager.Ai.csproj" />
+    <Project Path="src/DriveManager.App/DriveManager.App.csproj" />
+    <Project Path="src/DriveManager.Core/DriveManager.Core.csproj" />
+    <Project Path="src/DriveManager.Platform.Windows/DriveManager.Platform.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DriveManager.Tests/DriveManager.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/DriveManager.Probe/DriveManager.Probe.csproj" />
+  </Folder>
+</Solution>
