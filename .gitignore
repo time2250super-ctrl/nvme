@@ -16,6 +16,18 @@ mcps/
 # Logs / scratch
 *.log
 
+# Local publish output, packed installer zip, and GGUF weights
+publish/
+src/DriveManager.Installer/payload/
+*.gguf
+
+# Debug screenshots
+/app-screenshot.png
+/app-tabs.png
+/monitor-c.png
+/ui-blank-check.png
+/ui-check.png
+
 # OS
 Thumbs.db
 .DS_Store
