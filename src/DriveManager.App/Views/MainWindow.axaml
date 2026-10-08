@@ -221,6 +221,95 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- Health history / trend -->
+                    <Border BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12"
+                            IsVisible="{Binding SelectedHealth, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Health History &amp; Trend" FontSize="15" FontWeight="Bold" />
+                            <TextBlock Text="{Binding TrendSummary}" TextWrapping="Wrap" Opacity="0.85" />
+                            <Grid ColumnDefinitions="140,90,70,*" Margin="0,4,0,0">
+                                <TextBlock Grid.Column="0" Text="Captured" FontWeight="SemiBold" FontSize="12" />
+                                <TextBlock Grid.Column="1" Text="Temp (C)" FontWeight="SemiBold" FontSize="12" />
+                                <TextBlock Grid.Column="2" Text="Used %" FontWeight="SemiBold" FontSize="12" />
+                                <TextBlock Grid.Column="3" Text="Status" FontWeight="SemiBold" FontSize="12" />
+                            </Grid>
+                            <ItemsControl ItemsSource="{Binding History}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnDefinitions="140,90,70,*">
+                                            <TextBlock Grid.Column="0" Text="{Binding CapturedAt}" FontSize="12" />
+                                            <TextBlock Grid.Column="1" Text="{Binding TemperatureCelsius}" FontSize="12" />
+                                            <TextBlock Grid.Column="2" Text="{Binding PercentageUsed}" FontSize="12" />
+                                            <TextBlock Grid.Column="3" Text="{Binding HealthStatus}" FontSize="12" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Drive tools (non-destructive) -->
+                    <Border BorderBrush="#33808080" BorderThickness="1" CornerRadius="6" Padding="12"
+                            IsVisible="{Binding SelectedDisk, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Drive Tools (safe / non-destructive)" FontSize="15" FontWeight="Bold" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="Volume:" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                <ComboBox MinWidth="260" ItemsSource="{Binding SelectedDisk.Volumes}"
+                                          SelectedItem="{Binding SelectedVolume}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock>
+                                                <Run Text="{Binding DriveLetter}" />
+                                                <Run Text=": " />
+                                                <Run Text="{Binding Label}" />
+                                                <Run Text=" (" />
+                                                <Run Text="{Binding FileSystem}" />
+                                                <Run Text=")" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" Margin="0,4,0,0">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="New label:" VerticalAlignment="Center"
+                                           FontWeight="SemiBold" Margin="0,0,8,4" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding NewLabel}" Margin="0,0,8,4" />
+                                <Button Grid.Row="0" Grid.Column="2" Content="Preview rename" Margin="0,0,0,4"
+                                        Command="{Binding PreviewRenameCommand}" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="New letter:" VerticalAlignment="Center"
+                                           FontWeight="SemiBold" Margin="0,0,8,0" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NewDriveLetter}" MaxLength="1" Margin="0,0,8,0" />
+                                <Button Grid.Row="1" Grid.Column="2" Content="Preview change letter"
+                                        Command="{Binding PreviewChangeLetterCommand}" />
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="Preview remove letter" Command="{Binding PreviewRemoveLetterCommand}" />
+                                <Button Content="Preview take offline" Command="{Binding PreviewOfflineCommand}" />
+                                <Button Content="Preview bring online" Command="{Binding PreviewOnlineCommand}" />
+                            </StackPanel>
+
+                            <Border Background="#1A808080" CornerRadius="4" Padding="8" Margin="0,4,0,0"
+                                    IsVisible="{Binding ToolsPreview, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="{Binding ToolsPreview}" TextWrapping="Wrap" FontFamily="Consolas,monospace" FontSize="12" />
+                                    <TextBlock Text="{Binding ConfirmationHint}" Foreground="#E3A008" FontWeight="SemiBold"
+                                               IsVisible="{Binding ConfirmationHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <TextBox Text="{Binding ConfirmationInput}" Watermark="Confirmation phrase (if required)"
+                                             IsVisible="{Binding ConfirmationHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <Button Content="Apply" HorizontalAlignment="Left"
+                                            Command="{Binding ApplyPendingCommand}" IsEnabled="{Binding !IsBusy}" />
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{Binding ToolsStatus}" Opacity="0.8" FontSize="12" />
+                        </StackPanel>
+                    </Border>
+
                 </StackPanel>
             </ScrollViewer>
         </Grid>

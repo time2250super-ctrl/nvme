@@ -1,7 +1,9 @@
 using System;
+using System.IO;
 using DriveManager.Ai;
 using DriveManager.App.ViewModels;
 using DriveManager.Core.Abstractions;
+using DriveManager.Core.Telemetry;
 using DriveManager.Platform.Windows;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,6 +23,12 @@ public static class AppServices
         services.AddSingleton<IHealthAnalyzer, RuleBasedHealthAnalyzer>();
         services.AddSingleton<IChatAssistant, PlaceholderChatAssistant>();
 
+        // Telemetry history (SQLite, local, non-destructive).
+        var dbPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DriveManager", "telemetry.db");
+        services.AddSingleton<ITelemetryStore>(_ => new SqliteTelemetryStore(dbPath));
+
         // Platform services.
         if (OperatingSystem.IsWindows())
         {
@@ -28,6 +36,7 @@ public static class AppServices
             services.AddSingleton<IHealthService, WindowsHealthService>();
             services.AddSingleton<IFormatService, WindowsFormatService>();
             services.AddSingleton<ISecurityService, WindowsSecurityService>();
+            services.AddSingleton<IDriveToolsService, WindowsDriveToolsService>();
         }
 
         // View models.

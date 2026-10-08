@@ -1,6 +1,8 @@
-﻿using DriveManager.Ai;
+﻿using System.IO;
+using DriveManager.Ai;
 using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
+using DriveManager.Core.Telemetry;
 using DriveManager.Platform.Windows;
 using Xunit;
 
@@ -156,6 +158,79 @@ public sealed class MultiDriveHealthLiveTests
                 continue;
             Assert.False(string.IsNullOrWhiteSpace(health.Source));
         }
+    }
+}
+
+[Collection("live-hardware")]
+public sealed class TelemetryLiveTests
+{
+    private readonly LiveHardwareFixture _fx;
+    public TelemetryLiveTests(LiveHardwareFixture fx) => _fx = fx;
+
+    [Fact]
+    public async Task Saves_And_Reads_Back_A_Real_Health_Snapshot()
+    {
+        var health = _fx.HealthByDisk.Values.FirstOrDefault(h => h is not null && h.HasAnyData);
+        Assert.NotNull(health); // at least one real drive must expose health data
+
+        var path = Path.Combine(Path.GetTempPath(), $"dmtest_{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = new SqliteTelemetryStore(path);
+            await store.SaveAsync("live-test-key", health!);
+
+            var history = await store.GetHistoryAsync("live-test-key");
+            Assert.Single(history);
+            Assert.Equal(health!.Source, history[0].Source);
+            Assert.Equal(health.HealthStatus, history[0].HealthStatus);
+            Assert.Equal(1, await store.CountAsync("live-test-key"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { if (File.Exists(path)) File.Delete(path); } catch { /* temp file */ }
+        }
+    }
+}
+
+[Collection("live-hardware")]
+public sealed class DriveToolsPreviewLiveTests
+{
+    private readonly LiveHardwareFixture _fx;
+    public DriveToolsPreviewLiveTests(LiveHardwareFixture fx) => _fx = fx;
+
+    [Fact]
+    public void Taking_System_Disk_Offline_Is_Blocked_In_Preview()
+    {
+        var sys = _fx.Disks.First(d => d.IsSystem);
+        var svc = new WindowsDriveToolsService();
+        var op = svc.BuildSetDiskOffline(sys, offline: true);
+        Assert.Contains(op.Preview.Warnings, w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Set_Label_Preview_Builds_A_SetVolume_Command()
+    {
+        var disk = _fx.Disks.First();
+        var svc = new WindowsDriveToolsService();
+        var op = svc.BuildSetLabel(disk, 'Z', "LiveTestLabel");
+        Assert.Equal(DriveOperationKind.SetLabel, op.Kind);
+        Assert.Contains(op.Preview.Steps, s => s.Contains("Set-Volume") && s.Contains("LiveTestLabel"));
+        Assert.False(op.Preview.IsDestructive);
+    }
+
+    [Fact]
+    public async Task Offline_Execution_Without_Correct_Confirmation_Throws_Before_Running()
+    {
+        // Pick a real NON-system disk so the guard reaches the confirmation check (and still refuses).
+        var disk = _fx.Disks.FirstOrDefault(d => !d.IsSystem && !d.IsBoot);
+        if (disk is null) return; // only an OS disk present; covered by the blocked-preview test
+
+        var svc = new WindowsDriveToolsService();
+        var op = svc.BuildSetDiskOffline(disk, offline: true);
+        // Wrong confirmation must throw BEFORE any Set-Disk runs (nothing is taken offline).
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.ExecuteAsync(op, "definitely not the phrase"));
     }
 }
 
