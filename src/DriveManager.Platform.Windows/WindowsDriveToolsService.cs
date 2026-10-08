@@ -2,29 +2,22 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 using DriveManager.Core.Abstractions;
-using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 
 namespace DriveManager.Platform.Windows;
 
 /// <summary>
-/// Non-destructive drive management on Windows, implemented by wrapping proven Storage cmdlets
-/// (Set-Volume, Set-Partition, Remove-PartitionAccessPath, Set-Disk). Previews are built first;
-/// execution re-derives the exact command from typed parameters. System/boot disks are protected.
+/// Drive management on Windows via Storage cmdlets (Set-Volume, Set-Partition,
+/// Remove-PartitionAccessPath, Set-Disk). Actions run immediately.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsDriveToolsService : IDriveToolsService
 {
     public bool IsSupported => OperatingSystem.IsWindows();
 
-    // ---- Builders (previews) -------------------------------------------------
-
     public DriveOperation BuildSetLabel(PhysicalDiskInfo disk, char driveLetter, string newLabel)
     {
         var letter = NormalizeLetter(driveLetter);
-        var warnings = new List<string>();
-        if (disk.IsSystem || disk.IsBoot)
-            warnings.Add("This volume is on the OS/boot disk; renaming is allowed but affects the system drive.");
 
         var preview = new OperationPreview
         {
@@ -32,9 +25,7 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
             Description = $"Changes the volume label of {letter}: on disk {disk.Number} ('{disk.FriendlyName}'). No data is affected.",
             TargetDisk = disk,
             IsDestructive = false,
-            ConfirmationPhrase = string.Empty,
             Steps = [$"Set-Volume -DriveLetter {letter} -NewFileSystemLabel \"{newLabel}\""],
-            Warnings = warnings,
         };
 
         return new DriveOperation
@@ -51,7 +42,6 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
     {
         var from = NormalizeLetter(currentLetter);
         var to = NormalizeLetter(newLetter);
-        var blocked = disk.IsSystem || disk.IsBoot;
 
         var preview = new OperationPreview
         {
@@ -59,11 +49,8 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
             Description = $"Reassigns the drive letter of {from}: (disk {disk.Number}, '{disk.FriendlyName}') to {to}:. No data is affected.",
             TargetDisk = disk,
             IsDestructive = false,
-            ConfirmationPhrase = string.Empty,
             Steps = [$"Set-Partition -DriveLetter {from} -NewDriveLetter {to}"],
-            Warnings = blocked
-                ? ["BLOCKED: this volume is on the OS/boot disk; changing its drive letter is not permitted."]
-                : ["Apps referencing the old letter may need reconfiguration."],
+            Warnings = ["Apps referencing the old letter may need reconfiguration."],
         };
 
         return new DriveOperation
@@ -79,7 +66,6 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
     public DriveOperation BuildRemoveDriveLetter(PhysicalDiskInfo disk, char driveLetter)
     {
         var letter = NormalizeLetter(driveLetter);
-        var blocked = disk.IsSystem || disk.IsBoot;
 
         var preview = new OperationPreview
         {
@@ -87,11 +73,8 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
             Description = $"Removes the {letter}: mount point (disk {disk.Number}, '{disk.FriendlyName}'). The volume and its data remain, just unmounted.",
             TargetDisk = disk,
             IsDestructive = false,
-            ConfirmationPhrase = string.Empty,
             Steps = [$"Get-Partition -DriveLetter {letter} | Remove-PartitionAccessPath -AccessPath \"{letter}:\\\""],
-            Warnings = blocked
-                ? ["BLOCKED: this volume is on the OS/boot disk; removing its drive letter is not permitted."]
-                : ["The volume will no longer be accessible by letter until a letter is reassigned."],
+            Warnings = ["The volume will no longer be accessible by letter until a letter is reassigned."],
         };
 
         return new DriveOperation
@@ -105,15 +88,7 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
 
     public DriveOperation BuildSetDiskOffline(PhysicalDiskInfo disk, bool offline)
     {
-        var blocked = (disk.IsSystem || disk.IsBoot) && offline;
         var kind = offline ? DriveOperationKind.SetDiskOffline : DriveOperationKind.SetDiskOnline;
-        var phrase = offline ? BuildOfflinePhrase(disk) : string.Empty;
-
-        var warnings = new List<string>();
-        if (blocked)
-            warnings.Add("BLOCKED: the OS/boot disk cannot be taken offline.");
-        else if (offline)
-            warnings.Add("Taking a disk offline unmounts all its volumes until it is brought back online. Reversible.");
 
         var preview = new OperationPreview
         {
@@ -121,9 +96,10 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
             Description = $"Sets disk {disk.Number} ('{disk.FriendlyName}') {(offline ? "offline" : "online")}. No data is erased.",
             TargetDisk = disk,
             IsDestructive = false,
-            ConfirmationPhrase = phrase,
             Steps = [$"Set-Disk -Number {disk.Number} -IsOffline ${offline.ToString().ToLowerInvariant()}"],
-            Warnings = warnings,
+            Warnings = offline
+                ? ["Taking a disk offline unmounts all its volumes until it is brought back online."]
+                : [],
         };
 
         return new DriveOperation
@@ -134,30 +110,8 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
         };
     }
 
-    // ---- Execution -----------------------------------------------------------
-
-    public async Task ExecuteAsync(DriveOperation op, string typedConfirmation = "", CancellationToken ct = default)
+    public async Task ExecuteAsync(DriveOperation op, CancellationToken ct = default)
     {
-        var disk = op.Disk;
-
-        // Guardrails.
-        switch (op.Kind)
-        {
-            case DriveOperationKind.ChangeDriveLetter:
-            case DriveOperationKind.RemoveDriveLetter:
-                if (disk.IsSystem || disk.IsBoot)
-                    throw new InvalidOperationException("Operation not permitted on the OS/boot disk.");
-                break;
-
-            case DriveOperationKind.SetDiskOffline:
-                if (disk.IsSystem || disk.IsBoot)
-                    throw new InvalidOperationException("The OS/boot disk cannot be taken offline.");
-                var expected = BuildOfflinePhrase(disk);
-                if (!string.Equals(typedConfirmation?.Trim(), expected, StringComparison.Ordinal))
-                    throw new InvalidOperationException("Confirmation phrase does not match. Aborting taking the disk offline.");
-                break;
-        }
-
         var command = BuildCommand(op);
         await RunPowerShellAsync(command, ct).ConfigureAwait(false);
     }
@@ -206,14 +160,6 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
                 $"Drive operation failed (exit {process.ExitCode}). {stderr.ToString().Trim()}");
-    }
-
-    // ---- Helpers -------------------------------------------------------------
-
-    private static string BuildOfflinePhrase(PhysicalDiskInfo disk)
-    {
-        var serial = string.IsNullOrWhiteSpace(disk.SerialNumber) ? "NOSERIAL" : disk.SerialNumber!.Trim();
-        return $"OFFLINE DISK {disk.Number} {serial}";
     }
 
     private static char NormalizeLetter(char letter)

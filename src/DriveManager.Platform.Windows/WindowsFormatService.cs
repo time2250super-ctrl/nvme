@@ -1,21 +1,18 @@
 using System.Runtime.Versioning;
 using DriveManager.Core.Abstractions;
-using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 using DriveManager.Platform.Windows.Native;
 
 namespace DriveManager.Platform.Windows;
 
 /// <summary>
-/// Builds dry-run previews for formatting / repartitioning on Windows and executes them (guarded)
-/// once the user types the exact confirmation phrase. System/boot disks are always refused.
+/// Formats and repartitions on Windows by running PowerShell / diskpart immediately.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsFormatService : IFormatService
 {
     public OperationPreview PreviewQuickFormat(PhysicalDiskInfo disk, char driveLetter, FileSystemType fileSystem, string label)
     {
-        var guard = DriveGuard.EnsureSafeTarget(disk);
         var fs = fileSystem.ToString().ToUpperInvariant();
         var letter = char.ToUpperInvariant(driveLetter);
 
@@ -26,19 +23,20 @@ public sealed class WindowsFormatService : IFormatService
             TargetDisk = disk,
             IsDestructive = true,
             Runner = ExecutionRunner.PowerShell,
-            ConfirmationPhrase = DriveGuard.BuildConfirmationPhrase(disk),
             Steps =
             [
                 $"# PowerShell",
                 $"Format-Volume -DriveLetter {letter} -FileSystem {fs} -NewFileSystemLabel \"{label}\" -Force -Confirm:$false",
             ],
-            Warnings = BuildWarnings(guard),
+            Warnings =
+            [
+                "This operation is destructive and cannot be undone.",
+            ],
         };
     }
 
     public OperationPreview PreviewRepartition(PhysicalDiskInfo disk, IReadOnlyList<long> partitionSizesBytes, FileSystemType fileSystem)
     {
-        var guard = DriveGuard.EnsureSafeTarget(disk);
         var fs = fileSystem.ToString().ToUpperInvariant();
 
         var steps = new List<string>
@@ -68,24 +66,14 @@ public sealed class WindowsFormatService : IFormatService
             TargetDisk = disk,
             IsDestructive = true,
             Runner = ExecutionRunner.Diskpart,
-            ConfirmationPhrase = DriveGuard.BuildConfirmationPhrase(disk),
             Steps = steps,
-            Warnings = BuildWarnings(guard),
+            Warnings =
+            [
+                "This operation is destructive and cannot be undone.",
+            ],
         };
     }
 
-    public Task ExecuteAsync(OperationPreview preview, string typedConfirmation, CancellationToken ct = default)
-        => DestructiveExecutor.ExecuteAsync(preview, typedConfirmation, ct);
-
-    private static List<string> BuildWarnings(GuardResult guard)
-    {
-        var warnings = new List<string>
-        {
-            "This operation is destructive and cannot be undone.",
-            "Ensure all important data has been backed up first.",
-        };
-        if (!guard.Allowed)
-            warnings.Insert(0, "BLOCKED: " + guard.Reason);
-        return warnings;
-    }
+    public Task ExecuteAsync(OperationPreview preview, CancellationToken ct = default)
+        => DestructiveExecutor.ExecuteAsync(preview, ct);
 }

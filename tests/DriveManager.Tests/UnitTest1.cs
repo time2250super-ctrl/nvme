@@ -1,6 +1,5 @@
 ﻿using System.IO;
 using DriveManager.Ai;
-using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 using DriveManager.Core.Telemetry;
 using DriveManager.Platform.Windows;
@@ -194,22 +193,13 @@ public sealed class TelemetryLiveTests
 }
 
 [Collection("live-hardware")]
-public sealed class DriveToolsPreviewLiveTests
+public sealed class DriveToolsLiveTests
 {
     private readonly LiveHardwareFixture _fx;
-    public DriveToolsPreviewLiveTests(LiveHardwareFixture fx) => _fx = fx;
+    public DriveToolsLiveTests(LiveHardwareFixture fx) => _fx = fx;
 
     [Fact]
-    public void Taking_System_Disk_Offline_Is_Blocked_In_Preview()
-    {
-        var sys = _fx.Disks.First(d => d.IsSystem);
-        var svc = new WindowsDriveToolsService();
-        var op = svc.BuildSetDiskOffline(sys, offline: true);
-        Assert.Contains(op.Preview.Warnings, w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void Set_Label_Preview_Builds_A_SetVolume_Command()
+    public void Set_Label_Builds_A_SetVolume_Command()
     {
         var disk = _fx.Disks.First();
         var svc = new WindowsDriveToolsService();
@@ -220,49 +210,12 @@ public sealed class DriveToolsPreviewLiveTests
     }
 
     [Fact]
-    public async Task Offline_Execution_Without_Correct_Confirmation_Throws_Before_Running()
+    public void Offline_Builds_A_SetDisk_Command()
     {
-        // Pick a real NON-system disk so the guard reaches the confirmation check (and still refuses).
-        var disk = _fx.Disks.FirstOrDefault(d => !d.IsSystem && !d.IsBoot);
-        if (disk is null) return; // only an OS disk present; covered by the blocked-preview test
-
+        var disk = _fx.Disks.First();
         var svc = new WindowsDriveToolsService();
         var op = svc.BuildSetDiskOffline(disk, offline: true);
-        // Wrong confirmation must throw BEFORE any Set-Disk runs (nothing is taken offline).
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.ExecuteAsync(op, "definitely not the phrase"));
-    }
-}
-
-[Collection("live-hardware")]
-public sealed class DriveGuardLiveTests
-{
-    private readonly LiveHardwareFixture _fx;
-    public DriveGuardLiveTests(LiveHardwareFixture fx) => _fx = fx;
-
-    [Fact]
-    public void Real_System_Disk_Is_Blocked_From_Destructive_Ops()
-    {
-        var systemDisk = _fx.Disks.First(d => d.IsSystem);
-        Assert.False(DriveGuard.EnsureSafeTarget(systemDisk).Allowed);
-    }
-
-    [Fact]
-    public void Real_Nvme_Data_Disk_Is_Allowed_When_Not_System()
-    {
-        Assert.NotNull(_fx.Nvme);
-        if (_fx.Nvme!.IsSystem || _fx.Nvme.IsBoot)
-            return; // This machine's NVMe is the OS disk; guard correctly blocks it elsewhere.
-
-        Assert.True(DriveGuard.EnsureSafeTarget(_fx.Nvme).Allowed);
-    }
-
-    [Fact]
-    public void Wrong_Confirmation_Phrase_Throws_For_Real_Disk()
-    {
-        Assert.NotNull(_fx.Nvme);
-        var phrase = DriveGuard.BuildConfirmationPhrase(_fx.Nvme!);
-        Assert.Throws<InvalidOperationException>(
-            () => DriveGuard.Validate(_fx.Nvme!, "incorrect confirmation", phrase));
+        Assert.Equal(DriveOperationKind.SetDiskOffline, op.Kind);
+        Assert.Contains(op.Preview.Steps, s => s.Contains("Set-Disk") && s.Contains("IsOffline"));
     }
 }

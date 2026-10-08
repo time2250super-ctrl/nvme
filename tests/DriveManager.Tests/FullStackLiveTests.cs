@@ -36,7 +36,7 @@ public sealed class FullStackLiveTests
     }
 
     [Fact]
-    public void Tools_and_format_previews_target_licensed_disk_only()
+    public void Tools_and_format_plans_target_licensed_disk()
     {
         var disk = TargetDriveLock.FindLicensedDisk(_fx.Disks)!;
         var vol = disk.Volumes.First(v => v.DriveLetter.HasValue);
@@ -44,12 +44,12 @@ public sealed class FullStackLiveTests
 
         var tools = new WindowsDriveToolsService();
         var rename = tools.BuildSetLabel(disk, letter, "DriveMgr");
-        Assert.False(rename.Preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(DriveOperationKind.SetLabel, rename.Kind);
 
         var format = new WindowsFormatService();
-        var preview = format.PreviewQuickFormat(disk, letter, FileSystemType.Ntfs, "DriveMgr");
-        Assert.Contains("Format-Volume", string.Join(" ", preview.Steps), StringComparison.OrdinalIgnoreCase);
-        Assert.StartsWith("ERASE DISK", preview.ConfirmationPhrase);
+        var plan = format.PreviewQuickFormat(disk, letter, FileSystemType.Ntfs, "DriveMgr");
+        Assert.Contains("Format-Volume", string.Join(" ", plan.Steps), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ExecutionRunner.PowerShell, plan.Runner);
     }
 
     [Fact]

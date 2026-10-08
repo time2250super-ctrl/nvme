@@ -10,9 +10,8 @@ public enum DriveOperationKind
 }
 
 /// <summary>
-/// A structured, reversible drive-management operation (non-destructive to data). Built via the
-/// tools service as a preview first; execution re-derives the exact OS command from these typed
-/// parameters (never from free-form strings).
+/// A structured drive-management operation. Built via the tools service;
+/// execution re-derives the exact OS command from these typed parameters.
 /// </summary>
 public sealed record DriveOperation
 {

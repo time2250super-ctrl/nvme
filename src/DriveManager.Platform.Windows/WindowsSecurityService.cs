@@ -1,14 +1,13 @@
 using System.Runtime.Versioning;
 using DriveManager.Core.Abstractions;
-using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 using DriveManager.Platform.Windows.Native;
 
 namespace DriveManager.Platform.Windows;
 
 /// <summary>
-/// Drive security on Windows: live BitLocker status, enable/disable encryption, and (guarded)
-/// full-disk secure erase. Reads are safe; state-changing actions require a typed confirmation.
+/// Drive security on Windows: live BitLocker status, enable/disable encryption, and
+/// full-disk secure erase. Actions run immediately.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsSecurityService : ISecurityService
@@ -73,20 +72,8 @@ public sealed class WindowsSecurityService : ISecurityService
         };
     }
 
-    // --- Secure erase (destructive, guarded by DriveGuard) --------------------
-
     public OperationPreview PreviewSecureErase(PhysicalDiskInfo disk)
     {
-        var guard = DriveGuard.EnsureSafeTarget(disk);
-        var warnings = new List<string>
-        {
-            "Secure erase irreversibly destroys ALL data and partitions on the entire physical disk.",
-            "This performs a full single-pass overwrite of every sector; it can take a long time on large drives.",
-            "The drive will need a new partition/format afterwards before it can be used.",
-        };
-        if (!guard.Allowed)
-            warnings.Insert(0, "BLOCKED: " + guard.Reason);
-
         return new OperationPreview
         {
             Title = $"Secure erase of disk {disk.Number}",
@@ -95,21 +82,23 @@ public sealed class WindowsSecurityService : ISecurityService
             TargetDisk = disk,
             IsDestructive = true,
             Runner = ExecutionRunner.Diskpart,
-            ConfirmationPhrase = DriveGuard.BuildConfirmationPhrase(disk),
             Steps =
             [
                 "# diskpart script - full-disk zero overwrite",
                 $"select disk {disk.Number}",
                 "clean all",
             ],
-            Warnings = warnings,
+            Warnings =
+            [
+                "Secure erase irreversibly destroys ALL data and partitions on the entire physical disk.",
+                "This performs a full single-pass overwrite of every sector; it can take a long time on large drives.",
+                "The drive will need a new partition/format afterwards before it can be used.",
+            ],
         };
     }
 
-    public Task ExecuteAsync(OperationPreview preview, string typedConfirmation, CancellationToken ct = default)
-        => DestructiveExecutor.ExecuteAsync(preview, typedConfirmation, ct);
-
-    // --- BitLocker encryption (non-destructive, confirmation-gated) -----------
+    public Task ExecuteAsync(OperationPreview preview, CancellationToken ct = default)
+        => DestructiveExecutor.ExecuteAsync(preview, ct);
 
     public OperationPreview PreviewEnableEncryption(char driveLetter)
     {
@@ -122,7 +111,6 @@ public sealed class WindowsSecurityService : ISecurityService
             TargetDisk = null!,
             IsDestructive = false,
             Runner = ExecutionRunner.PowerShell,
-            ConfirmationPhrase = $"ENCRYPT {letter}:",
             Steps =
             [
                 $"Enable-BitLocker -MountPoint \"{letter}:\" -EncryptionMethod XtsAes256 -RecoveryPasswordProtector -UsedSpaceOnly -SkipHardwareTest",
@@ -145,17 +133,13 @@ public sealed class WindowsSecurityService : ISecurityService
             TargetDisk = null!,
             IsDestructive = false,
             Runner = ExecutionRunner.PowerShell,
-            ConfirmationPhrase = $"DECRYPT {letter}:",
             Steps = [$"Disable-BitLocker -MountPoint \"{letter}:\""],
             Warnings = ["Decryption can take a while; the volume stays usable during the process."],
         };
     }
 
-    public async Task ExecuteEncryptionAsync(OperationPreview preview, string typedConfirmation, CancellationToken ct = default)
+    public async Task ExecuteEncryptionAsync(OperationPreview preview, CancellationToken ct = default)
     {
-        if (!string.Equals(typedConfirmation?.Trim(), preview.ConfirmationPhrase.Trim(), StringComparison.Ordinal))
-            throw new InvalidOperationException("Confirmation phrase does not match. Aborting encryption change.");
-
         var commands = preview.Steps
             .Where(s => !string.IsNullOrWhiteSpace(s) && !s.TrimStart().StartsWith('#'))
             .ToList();

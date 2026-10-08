@@ -1,9 +1,9 @@
 namespace DriveManager.Core.Models;
 
-/// <summary>How a preview's steps are executed once confirmed.</summary>
+/// <summary>How a plan's steps are executed.</summary>
 public enum ExecutionRunner
 {
-    /// <summary>Not executable (preview only).</summary>
+    /// <summary>Not executable.</summary>
     None,
     /// <summary>Steps are PowerShell commands.</summary>
     PowerShell,
@@ -12,8 +12,7 @@ public enum ExecutionRunner
 }
 
 /// <summary>
-/// A dry-run description of a destructive operation (format, partition, secure erase).
-/// Nothing is executed until the user confirms with a matching token.
+/// The command plan for a disk operation. The UI runs it immediately; it is not a simulation.
 /// </summary>
 public sealed record OperationPreview
 {
@@ -23,7 +22,7 @@ public sealed record OperationPreview
     /// <summary>The target disk this operation will affect.</summary>
     public required PhysicalDiskInfo TargetDisk { get; init; }
 
-    /// <summary>Exact commands / steps that will run, shown to the user before execution.</summary>
+    /// <summary>Exact commands that will run.</summary>
     public IReadOnlyList<string> Steps { get; init; } = [];
 
     public IReadOnlyList<string> Warnings { get; init; } = [];
@@ -31,14 +30,8 @@ public sealed record OperationPreview
     public bool IsDestructive { get; init; } = true;
 
     /// <summary>
-    /// How <see cref="Steps"/> are run on confirmation. <see cref="ExecutionRunner.None"/> means
-    /// the operation is preview-only (not wired for execution).
+    /// How <see cref="Steps"/> are run. <see cref="ExecutionRunner.None"/> means
+    /// the operation has no runner.
     /// </summary>
     public ExecutionRunner Runner { get; init; } = ExecutionRunner.None;
-
-    /// <summary>
-    /// The phrase the user must type to confirm. Defaults to the target disk identity so
-    /// confirmation cannot be given for the wrong device by muscle memory.
-    /// </summary>
-    public string ConfirmationPhrase { get; init; } = string.Empty;
 }

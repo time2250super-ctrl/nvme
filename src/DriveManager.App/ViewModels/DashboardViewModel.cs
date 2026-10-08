@@ -25,11 +25,6 @@ public partial class DashboardViewModel : ViewModelBase
     private readonly IChatAssistant? _chat;
     private readonly IPermissionManager? _permissions;
 
-    private DriveOperation? _pendingOperation;
-
-    private OperationPreview? _pendingDestructive;
-    private Func<OperationPreview, string, CancellationToken, Task>? _pendingDestructiveExec;
-
     [ObservableProperty]
     private bool _isBusy;
 
@@ -63,16 +58,7 @@ public partial class DashboardViewModel : ViewModelBase
     private string _newDriveLetter = string.Empty;
 
     [ObservableProperty]
-    private string _toolsPreview = string.Empty;
-
-    [ObservableProperty]
-    private string _toolsStatus = "Select a volume to manage.";
-
-    [ObservableProperty]
-    private string _confirmationHint = string.Empty;
-
-    [ObservableProperty]
-    private string _confirmationInput = string.Empty;
+    private string _toolsStatus = "Select a volume, then run an action.";
 
     // --- Danger zone (destructive) ---
     [ObservableProperty]
@@ -82,34 +68,14 @@ public partial class DashboardViewModel : ViewModelBase
     private string _formatLabel = "DATA";
 
     [ObservableProperty]
-    private string _dangerPreview = string.Empty;
-
-    [ObservableProperty]
-    private string _dangerConfirmation = string.Empty;
-
-    [ObservableProperty]
-    private string _dangerStatus = "Select a disk, then build a preview. Destructive actions require typing the exact confirmation phrase.";
-
-    [ObservableProperty]
-    private string _dangerConfirmHint = string.Empty;
+    private string _dangerStatus = "These actions run immediately and erase data.";
 
     // --- Security / encryption ---
     [ObservableProperty]
     private VolumeSecurityState? _security;
 
     [ObservableProperty]
-    private string _encPreview = string.Empty;
-
-    [ObservableProperty]
-    private string _encConfirmHint = string.Empty;
-
-    [ObservableProperty]
-    private string _encConfirmation = string.Empty;
-
-    [ObservableProperty]
     private string _encStatus = "Select a volume to view its encryption status.";
-
-    private OperationPreview? _pendingEncryption;
 
     // --- AI model / local chat ---
     [ObservableProperty]
@@ -267,14 +233,6 @@ public partial class DashboardViewModel : ViewModelBase
         TrendSummary = string.Empty;
         SelectedVolume = value?.Volumes.FirstOrDefault(v => v.DriveLetter is not null)
                           ?? value?.Volumes.FirstOrDefault();
-        ToolsPreview = string.Empty;
-        ConfirmationHint = string.Empty;
-        _pendingOperation = null;
-        DangerPreview = string.Empty;
-        DangerConfirmHint = string.Empty;
-        DangerConfirmation = string.Empty;
-        _pendingDestructive = null;
-        _pendingDestructiveExec = null;
 
         // Recommend the best filesystem for each volume on this disk.
         FsAdvice.Clear();
@@ -294,10 +252,6 @@ public partial class DashboardViewModel : ViewModelBase
 
     partial void OnSelectedVolumeChanged(VolumeInfo? value)
     {
-        _pendingEncryption = null;
-        EncPreview = string.Empty;
-        EncConfirmHint = string.Empty;
-        EncConfirmation = string.Empty;
         Security = null;
         if (value?.DriveLetter is char letter)
             _ = LoadSecurityAsync(letter);
@@ -406,71 +360,54 @@ public partial class DashboardViewModel : ViewModelBase
         }
     }
 
-    // --- Drive tools commands (preview-first) ---------------------------------
+    // --- Drive tools (run immediately) ----------------------------------------
 
     [RelayCommand]
-    private void PreviewRename()
+    private async Task RenameAsync()
     {
         if (!TryGetToolTarget(out var disk, out var letter)) return;
         if (string.IsNullOrWhiteSpace(NewLabel)) { ToolsStatus = "Enter a new label first."; return; }
-        SetPending(_tools!.BuildSetLabel(disk, letter, NewLabel.Trim()));
+        await RunToolAsync(_tools!.BuildSetLabel(disk, letter, NewLabel.Trim()));
     }
 
     [RelayCommand]
-    private void PreviewChangeLetter()
+    private async Task ChangeLetterAsync()
     {
         if (!TryGetToolTarget(out var disk, out var letter)) return;
         if (string.IsNullOrWhiteSpace(NewDriveLetter)) { ToolsStatus = "Enter a target drive letter first."; return; }
-        SetPending(_tools!.BuildChangeDriveLetter(disk, letter, NewDriveLetter.Trim()[0]));
+        await RunToolAsync(_tools!.BuildChangeDriveLetter(disk, letter, NewDriveLetter.Trim()[0]));
     }
 
     [RelayCommand]
-    private void PreviewRemoveLetter()
+    private async Task RemoveLetterAsync()
     {
         if (!TryGetToolTarget(out var disk, out var letter)) return;
-        SetPending(_tools!.BuildRemoveDriveLetter(disk, letter));
+        await RunToolAsync(_tools!.BuildRemoveDriveLetter(disk, letter));
     }
 
     [RelayCommand]
-    private void PreviewOffline()
+    private async Task OfflineAsync()
     {
         if (SelectedDisk is null || _tools is null) { ToolsStatus = "Select a disk first."; return; }
-        SetPending(_tools.BuildSetDiskOffline(SelectedDisk, offline: true));
+        await RunToolAsync(_tools.BuildSetDiskOffline(SelectedDisk, offline: true));
     }
 
     [RelayCommand]
-    private void PreviewOnline()
+    private async Task OnlineAsync()
     {
         if (SelectedDisk is null || _tools is null) { ToolsStatus = "Select a disk first."; return; }
-        SetPending(_tools.BuildSetDiskOffline(SelectedDisk, offline: false));
+        await RunToolAsync(_tools.BuildSetDiskOffline(SelectedDisk, offline: false));
     }
 
-    [RelayCommand]
-    private async Task ApplyPendingAsync()
+    private async Task RunToolAsync(DriveOperation op)
     {
-        if (_pendingOperation is null || _tools is null)
-        {
-            ToolsStatus = "Nothing to apply. Build a preview first.";
-            return;
-        }
-
-        var op = _pendingOperation;
-        if (op.Preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase)))
-        {
-            ToolsStatus = "This operation is blocked by safety rules and will not run.";
-            return;
-        }
-
+        if (_tools is null) return;
         try
         {
             IsBusy = true;
-            ToolsStatus = $"Applying: {op.Preview.Title}...";
-            await _tools.ExecuteAsync(op, ConfirmationInput);
+            ToolsStatus = $"Running: {op.Preview.Title}...";
+            await _tools.ExecuteAsync(op);
             ToolsStatus = $"Done: {op.Preview.Title}.";
-            _pendingOperation = null;
-            ToolsPreview = string.Empty;
-            ConfirmationHint = string.Empty;
-            ConfirmationInput = string.Empty;
             await RefreshAsync();
         }
         catch (Exception ex)
@@ -493,21 +430,7 @@ public partial class DashboardViewModel : ViewModelBase
         return true;
     }
 
-    private void SetPending(DriveOperation op)
-    {
-        _pendingOperation = op;
-        var p = op.Preview;
-        var steps = string.Join(Environment.NewLine, p.Steps);
-        var warns = p.Warnings.Count > 0 ? Environment.NewLine + "! " + string.Join(Environment.NewLine + "! ", p.Warnings) : string.Empty;
-        ToolsPreview = $"{p.Title}{Environment.NewLine}{p.Description}{Environment.NewLine}{Environment.NewLine}{steps}{warns}";
-        ConfirmationHint = string.IsNullOrEmpty(p.ConfirmationPhrase)
-            ? string.Empty
-            : $"Type to confirm:  {p.ConfirmationPhrase}";
-        ToolsStatus = "Preview ready. Review, then Apply.";
-        ShowPopup("Tools preview", ToolsPreview);
-    }
-
-    // --- Danger zone commands (destructive, fully guarded) --------------------
+    // --- Danger zone (run immediately) ----------------------------------------
 
     private FileSystemType ParseFileSystem() => SelectedFileSystem switch
     {
@@ -517,74 +440,43 @@ public partial class DashboardViewModel : ViewModelBase
     };
 
     [RelayCommand]
-    private void PreviewQuickFormat()
+    private async Task QuickFormatAsync()
     {
         if (SelectedDisk is null || _formatService is null) { DangerStatus = "Select a disk first."; return; }
         if (SelectedVolume?.DriveLetter is not char letter) { DangerStatus = "Select a volume with a drive letter in the Tools tab first."; return; }
-        var preview = _formatService.PreviewQuickFormat(SelectedDisk, letter, ParseFileSystem(), FormatLabel ?? string.Empty);
-        SetDestructive(preview, (p, c, ct) => _formatService.ExecuteAsync(p, c, ct));
+        var plan = _formatService.PreviewQuickFormat(SelectedDisk, letter, ParseFileSystem(), FormatLabel ?? string.Empty);
+        await RunDestructiveAsync(plan, p => _formatService.ExecuteAsync(p));
     }
 
     [RelayCommand]
-    private void PreviewRepartition()
+    private async Task RepartitionAsync()
     {
         if (SelectedDisk is null || _formatService is null) { DangerStatus = "Select a disk first."; return; }
-        // Single full-size GPT partition.
-        var preview = _formatService.PreviewRepartition(SelectedDisk, [SelectedDisk.SizeBytes], ParseFileSystem());
-        SetDestructive(preview, (p, c, ct) => _formatService.ExecuteAsync(p, c, ct));
+        var plan = _formatService.PreviewRepartition(SelectedDisk, [SelectedDisk.SizeBytes], ParseFileSystem());
+        await RunDestructiveAsync(plan, p => _formatService.ExecuteAsync(p));
     }
 
     [RelayCommand]
-    private void PreviewSecureErase()
+    private async Task SecureEraseAsync()
     {
         if (SelectedDisk is null || _securityService is null) { DangerStatus = "Select a disk first."; return; }
-        var preview = _securityService.PreviewSecureErase(SelectedDisk);
-        SetDestructive(preview, (p, c, ct) => _securityService.ExecuteAsync(p, c, ct));
+        var plan = _securityService.PreviewSecureErase(SelectedDisk);
+        await RunDestructiveAsync(plan, p => _securityService.ExecuteAsync(p));
     }
 
-    [RelayCommand]
-    private void CancelDestructive()
+    private async Task RunDestructiveAsync(OperationPreview plan, Func<OperationPreview, Task> exec)
     {
-        _pendingDestructive = null;
-        _pendingDestructiveExec = null;
-        DangerPreview = string.Empty;
-        DangerConfirmHint = string.Empty;
-        DangerConfirmation = string.Empty;
-        DangerStatus = "Cancelled.";
-    }
-
-    [RelayCommand]
-    private async Task ExecuteDestructiveAsync()
-    {
-        if (_pendingDestructive is null || _pendingDestructiveExec is null)
-        {
-            DangerStatus = "Nothing to execute. Build a preview first.";
-            return;
-        }
-
-        var preview = _pendingDestructive;
-        if (preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase)))
-        {
-            DangerStatus = "This operation is blocked by safety rules and will not run.";
-            return;
-        }
-
         try
         {
             IsBusy = true;
-            DangerStatus = $"Executing: {preview.Title} ... (this can take a while)";
-            await _pendingDestructiveExec(preview, DangerConfirmation, default);
-            DangerStatus = $"COMPLETED: {preview.Title}.";
-            _pendingDestructive = null;
-            _pendingDestructiveExec = null;
-            DangerPreview = string.Empty;
-            DangerConfirmHint = string.Empty;
-            DangerConfirmation = string.Empty;
+            DangerStatus = $"Running: {plan.Title}...";
+            await exec(plan);
+            DangerStatus = $"Done: {plan.Title}.";
             await RefreshAsync();
         }
         catch (Exception ex)
         {
-            DangerStatus = "FAILED: " + ex.Message;
+            DangerStatus = "Failed: " + ex.Message;
         }
         finally
         {
@@ -592,72 +484,35 @@ public partial class DashboardViewModel : ViewModelBase
         }
     }
 
-    private void SetDestructive(OperationPreview preview, Func<OperationPreview, string, CancellationToken, Task> exec)
-    {
-        _pendingDestructive = preview;
-        _pendingDestructiveExec = exec;
-
-        var steps = string.Join(Environment.NewLine, preview.Steps);
-        var warns = preview.Warnings.Count > 0
-            ? Environment.NewLine + "! " + string.Join(Environment.NewLine + "! ", preview.Warnings)
-            : string.Empty;
-        DangerPreview = $"{preview.Title}{Environment.NewLine}{preview.Description}{Environment.NewLine}{Environment.NewLine}{steps}{warns}";
-        DangerConfirmHint = $"To execute, type EXACTLY:  {preview.ConfirmationPhrase}";
-
-        var blocked = preview.Warnings.Any(w => w.StartsWith("BLOCKED", StringComparison.OrdinalIgnoreCase));
-        DangerStatus = blocked
-            ? "This target is protected (system/boot disk). Execution is blocked."
-            : "DANGER: review carefully. Type the confirmation phrase, then Execute.";
-        ShowPopup("Destructive preview", DangerPreview);
-    }
-
-    // --- Encryption commands (BitLocker, confirmation-gated) ------------------
+    // --- Encryption (run immediately) -----------------------------------------
 
     [RelayCommand]
-    private void PreviewEnableEncryption()
+    private async Task EnableEncryptionAsync()
     {
         if (_securityService is null || SelectedVolume?.DriveLetter is not char letter)
         { EncStatus = "Select a volume with a drive letter first."; return; }
-        SetEncryptionPreview(_securityService.PreviewEnableEncryption(letter));
+        await RunEncryptionAsync(_securityService.PreviewEnableEncryption(letter));
     }
 
     [RelayCommand]
-    private void PreviewDisableEncryption()
+    private async Task DisableEncryptionAsync()
     {
         if (_securityService is null || SelectedVolume?.DriveLetter is not char letter)
         { EncStatus = "Select a volume with a drive letter first."; return; }
-        SetEncryptionPreview(_securityService.PreviewDisableEncryption(letter));
+        await RunEncryptionAsync(_securityService.PreviewDisableEncryption(letter));
     }
 
-    [RelayCommand]
-    private void CancelEncryption()
+    private async Task RunEncryptionAsync(OperationPreview plan)
     {
-        _pendingEncryption = null;
-        EncPreview = string.Empty;
-        EncConfirmHint = string.Empty;
-        EncConfirmation = string.Empty;
-        EncStatus = "Cancelled.";
-    }
-
-    [RelayCommand]
-    private async Task ExecuteEncryptionAsync()
-    {
-        if (_pendingEncryption is null || _securityService is null)
-        { EncStatus = "Build an encryption preview first."; return; }
-
-        var preview = _pendingEncryption;
+        if (_securityService is null) return;
         try
         {
             IsBusy = true;
-            EncStatus = $"Applying: {preview.Title}... (this can take a while)";
-            await _securityService.ExecuteEncryptionAsync(preview, EncConfirmation);
-            _pendingEncryption = null;
-            EncPreview = string.Empty;
-            EncConfirmHint = string.Empty;
-            EncConfirmation = string.Empty;
+            EncStatus = $"Running: {plan.Title}...";
+            await _securityService.ExecuteEncryptionAsync(plan);
             if (SelectedVolume?.DriveLetter is char letter)
                 await LoadSecurityAsync(letter);
-            EncStatus = $"Done: {preview.Title}. {(Security?.Summary ?? string.Empty)}";
+            EncStatus = $"Done: {plan.Title}. {(Security?.Summary ?? string.Empty)}";
         }
         catch (Exception ex)
         {
@@ -667,19 +522,6 @@ public partial class DashboardViewModel : ViewModelBase
         {
             IsBusy = false;
         }
-    }
-
-    private void SetEncryptionPreview(OperationPreview preview)
-    {
-        _pendingEncryption = preview;
-        var steps = string.Join(Environment.NewLine, preview.Steps);
-        var warns = preview.Warnings.Count > 0
-            ? Environment.NewLine + "! " + string.Join(Environment.NewLine + "! ", preview.Warnings)
-            : string.Empty;
-        EncPreview = $"{preview.Title}{Environment.NewLine}{preview.Description}{Environment.NewLine}{Environment.NewLine}{steps}{warns}";
-        EncConfirmHint = $"To proceed, type EXACTLY:  {preview.ConfirmationPhrase}";
-        EncStatus = "Review, type the confirmation phrase, then Apply.";
-        ShowPopup("Encryption preview", EncPreview);
     }
 
     // --- AI model management + local chat -------------------------------------

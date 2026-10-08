@@ -164,7 +164,7 @@
                     <!-- Drive tools (non-destructive) -->
                     <Border Classes="card">
                         <StackPanel Spacing="6">
-                            <TextBlock Text="Drive Tools (safe / non-destructive)" FontSize="15" FontWeight="Bold" />
+                            <TextBlock Text="Drive Tools" FontSize="15" FontWeight="Bold" />
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Text="Volume:" VerticalAlignment="Center" FontWeight="SemiBold" />
@@ -189,34 +189,21 @@
                                 <TextBlock Grid.Row="0" Grid.Column="0" Text="New label:" VerticalAlignment="Center"
                                            FontWeight="SemiBold" Margin="0,0,8,4" />
                                 <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding NewLabel}" Margin="0,0,8,4" />
-                                <Button Grid.Row="0" Grid.Column="2" Content="Preview rename" Margin="0,0,0,4"
-                                        Command="{Binding PreviewRenameCommand}" />
+                                <Button Grid.Row="0" Grid.Column="2" Content="Rename" Margin="0,0,0,4"
+                                        Command="{Binding RenameCommand}" IsEnabled="{Binding !IsBusy}" />
 
                                 <TextBlock Grid.Row="1" Grid.Column="0" Text="New letter:" VerticalAlignment="Center"
                                            FontWeight="SemiBold" Margin="0,0,8,0" />
                                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NewDriveLetter}" MaxLength="1" Margin="0,0,8,0" />
-                                <Button Grid.Row="1" Grid.Column="2" Content="Preview change letter"
-                                        Command="{Binding PreviewChangeLetterCommand}" />
+                                <Button Grid.Row="1" Grid.Column="2" Content="Change letter"
+                                        Command="{Binding ChangeLetterCommand}" IsEnabled="{Binding !IsBusy}" />
                             </Grid>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button Content="Preview remove letter" Command="{Binding PreviewRemoveLetterCommand}" />
-                                <Button Content="Preview take offline" Command="{Binding PreviewOfflineCommand}" />
-                                <Button Content="Preview bring online" Command="{Binding PreviewOnlineCommand}" />
+                                <Button Content="Remove letter" Command="{Binding RemoveLetterCommand}" IsEnabled="{Binding !IsBusy}" />
+                                <Button Content="Take offline" Command="{Binding OfflineCommand}" IsEnabled="{Binding !IsBusy}" />
+                                <Button Content="Bring online" Command="{Binding OnlineCommand}" IsEnabled="{Binding !IsBusy}" />
                             </StackPanel>
-
-                            <Border Background="#1A808080" CornerRadius="4" Padding="8" Margin="0,4,0,0"
-                                    IsVisible="{Binding ToolsPreview, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="{Binding ToolsPreview}" TextWrapping="Wrap" FontFamily="Consolas,monospace" FontSize="12" />
-                                    <TextBlock Text="{Binding ConfirmationHint}" Foreground="#E3A008" FontWeight="SemiBold"
-                                               IsVisible="{Binding ConfirmationHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <TextBox Text="{Binding ConfirmationInput}" Watermark="Confirmation phrase (if required)"
-                                             IsVisible="{Binding ConfirmationHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <Button Content="Apply" HorizontalAlignment="Left"
-                                            Command="{Binding ApplyPendingCommand}" IsEnabled="{Binding !IsBusy}" />
-                                </StackPanel>
-                            </Border>
 
                             <TextBlock Text="{Binding ToolsStatus}" Opacity="0.8" FontSize="12" />
                         </StackPanel>
@@ -245,25 +232,11 @@
                                         </Border>
 
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Button Content="Enable encryption" Command="{Binding PreviewEnableEncryptionCommand}" />
-                                            <Button Content="Disable encryption" Command="{Binding PreviewDisableEncryptionCommand}" />
+                                            <Button Content="Enable encryption" Command="{Binding EnableEncryptionCommand}"
+                                                    IsEnabled="{Binding !IsBusy}" />
+                                            <Button Content="Disable encryption" Command="{Binding DisableEncryptionCommand}"
+                                                    IsEnabled="{Binding !IsBusy}" />
                                         </StackPanel>
-
-                                        <Border Background="#1A808080" CornerRadius="4" Padding="10" Margin="0,4,0,0"
-                                                IsVisible="{Binding EncPreview, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                            <StackPanel Spacing="8">
-                                                <TextBlock Text="{Binding EncPreview}" TextWrapping="Wrap"
-                                                           FontFamily="Consolas,monospace" FontSize="12" />
-                                                <TextBlock Text="{Binding EncConfirmHint}" Foreground="#E3A008" FontWeight="Bold"
-                                                           TextWrapping="Wrap" />
-                                                <TextBox Text="{Binding EncConfirmation}" Watermark="Type the confirmation phrase" />
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <Button Content="Apply" Classes="accent"
-                                                            Command="{Binding ExecuteEncryptionCommand}" IsEnabled="{Binding !IsBusy}" />
-                                                    <Button Content="Cancel" Command="{Binding CancelEncryptionCommand}" />
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -385,7 +358,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="Destructive Tools" FontSize="15" FontWeight="Bold" Foreground="#E51A1A" />
                                         <TextBlock TextWrapping="Wrap" Opacity="0.85" FontSize="12"
-                                                   Text="These operations erase data irreversibly. System/boot disks are always blocked. Nothing runs until you type the exact confirmation phrase and press Execute." />
+                                                   Text="These operations erase data immediately and cannot be undone." />
 
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="File system:" VerticalAlignment="Center" FontWeight="SemiBold" />
@@ -396,33 +369,16 @@
                                         </StackPanel>
 
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Button Content="Preview quick format (selected volume)"
-                                                    Command="{Binding PreviewQuickFormatCommand}" />
-                                            <Button Content="Preview wipe + repartition (whole disk)"
-                                                    Command="{Binding PreviewRepartitionCommand}" />
+                                            <Button Content="Quick format (selected volume)"
+                                                    Command="{Binding QuickFormatCommand}"
+                                                    IsEnabled="{Binding !IsBusy}" />
+                                            <Button Content="Wipe + repartition (whole disk)"
+                                                    Command="{Binding RepartitionCommand}"
+                                                    IsEnabled="{Binding !IsBusy}" />
                                         </StackPanel>
-                                        <Button Content="Preview secure erase (whole disk)" HorizontalAlignment="Left"
-                                                Command="{Binding PreviewSecureEraseCommand}" />
-
-                                        <Border Background="#22E51A1A" BorderBrush="#E51A1A" BorderThickness="1"
-                                                CornerRadius="4" Padding="10" Margin="0,4,0,0"
-                                                IsVisible="{Binding DangerPreview, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                            <StackPanel Spacing="8">
-                                                <TextBlock Text="{Binding DangerPreview}" TextWrapping="Wrap"
-                                                           FontFamily="Consolas,monospace" FontSize="12" />
-                                                <TextBlock Text="{Binding DangerConfirmHint}" Foreground="#E51A1A" FontWeight="Bold"
-                                                           TextWrapping="Wrap" />
-                                                <TextBox Text="{Binding DangerConfirmation}"
-                                                         Watermark="Type the exact confirmation phrase here" />
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <Button Content="EXECUTE" Foreground="White" Background="#E51A1A"
-                                                            FontWeight="Bold"
-                                                            Command="{Binding ExecuteDestructiveCommand}"
-                                                            IsEnabled="{Binding !IsBusy}" />
-                                                    <Button Content="Cancel" Command="{Binding CancelDestructiveCommand}" />
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
+                                        <Button Content="Secure erase (whole disk)" HorizontalAlignment="Left"
+                                                Command="{Binding SecureEraseCommand}"
+                                                IsEnabled="{Binding !IsBusy}" />
 
                                         <TextBlock Text="{Binding DangerStatus}" TextWrapping="Wrap" Opacity="0.9" FontSize="12" />
                                     </StackPanel>
