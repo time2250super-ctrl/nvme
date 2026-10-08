@@ -24,7 +24,7 @@ public partial class DashboardViewModel : ViewModelBase
     private PhysicalDiskInfo? _selectedDisk;
 
     [ObservableProperty]
-    private NvmeHealth? _selectedHealth;
+    private DriveHealthInfo? _selectedHealth;
 
     [ObservableProperty]
     private HealthAssessment? _assessment;
@@ -100,15 +100,13 @@ public partial class DashboardViewModel : ViewModelBase
         try
         {
             IsBusy = true;
-            Status = $"Reading NVMe health from disk {disk.Number}...";
+            Status = $"Reading health from disk {disk.Number} ({disk.BusType})...";
             var health = await _healthService.ReadHealthAsync(disk);
             SelectedHealth = health;
 
             if (health is null)
             {
-                Status = disk.IsNvme
-                    ? "Could not read NVMe health. Run the app as Administrator to access SMART data."
-                    : "This disk does not expose NVMe health data.";
+                Status = "No health data available for this disk. Run the app as Administrator to access drive diagnostics.";
                 Assessment = null;
             }
             else

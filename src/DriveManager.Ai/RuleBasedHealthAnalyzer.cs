@@ -3,18 +3,26 @@ using DriveManager.Core.Models;
 namespace DriveManager.Ai;
 
 /// <summary>
-/// Transparent, offline health scoring based on NVMe spec thresholds. Serves as the baseline
-/// and as a feature source / explainer for the chat assistant.
+/// Transparent, offline health scoring that works across drive types. It uses whatever metrics
+/// a drive exposes (NVMe SMART, SATA/USB reliability counters, predict-failure, health status).
 /// </summary>
 public sealed class RuleBasedHealthAnalyzer : IHealthAnalyzer
 {
-    public HealthAssessment Assess(NvmeHealth h, IReadOnlyList<NvmeHealth>? history = null)
+    public HealthAssessment Assess(DriveHealthInfo h, IReadOnlyList<DriveHealthInfo>? history = null)
     {
         var findings = new List<string>();
         var recommendations = new List<string>();
         var risk = 0;
 
-        // Critical warning flags are the strongest signal.
+        // Firmware failure prediction (SMART trip) - strongest signal available on SATA/USB too.
+        if (h.PredictFailure == true)
+        {
+            risk += 70;
+            findings.Add("Drive firmware predicts imminent failure (SMART trip).");
+            recommendations.Add("Back up immediately and replace the drive.");
+        }
+
+        // NVMe critical warning flags.
         if (h.HasCriticalWarning)
         {
             risk += 60;
@@ -22,53 +30,80 @@ public sealed class RuleBasedHealthAnalyzer : IHealthAnalyzer
             recommendations.Add("Back up data immediately; the controller is flagging a critical condition.");
         }
 
-        // Wear / endurance.
-        if (h.PercentageUsed >= 100)
+        // OS-reported overall health status.
+        switch (h.HealthStatus)
         {
-            risk += 40;
-            findings.Add($"Endurance used is {h.PercentageUsed}% (at or beyond rated life).");
-            recommendations.Add("Plan to replace the drive; rated write endurance is exhausted.");
+            case "Unhealthy":
+                risk += 60;
+                findings.Add("Windows reports this disk as Unhealthy.");
+                recommendations.Add("Investigate and replace the drive.");
+                break;
+            case "Warning":
+                risk += 25;
+                findings.Add("Windows reports this disk with a health Warning.");
+                break;
         }
-        else if (h.PercentageUsed >= 80)
+
+        // Wear / endurance.
+        if (h.PercentageUsed is int used)
         {
-            risk += 20;
-            findings.Add($"Endurance used is {h.PercentageUsed}%.");
-            recommendations.Add("Monitor wear; begin planning for eventual replacement.");
+            if (used >= 100)
+            {
+                risk += 40;
+                findings.Add($"Endurance used is {used}% (at or beyond rated life).");
+                recommendations.Add("Plan to replace the drive; rated write endurance is exhausted.");
+            }
+            else if (used >= 80)
+            {
+                risk += 20;
+                findings.Add($"Endurance used is {used}%.");
+                recommendations.Add("Monitor wear; begin planning for eventual replacement.");
+            }
         }
 
         // Spare blocks.
-        if (h.AvailableSpare > 0 && h.AvailableSpare <= h.AvailableSpareThreshold)
+        if (h.AvailableSpare is int spare && h.AvailableSpareThreshold is int threshold &&
+            spare > 0 && spare <= threshold)
         {
             risk += 30;
-            findings.Add($"Available spare {h.AvailableSpare}% at/below threshold {h.AvailableSpareThreshold}%.");
+            findings.Add($"Available spare {spare}% at/below threshold {threshold}%.");
             recommendations.Add("Spare area is depleted; replace the drive soon.");
         }
 
         // Temperature.
-        if (h.TemperatureCelsius >= 75)
+        if (h.TemperatureCelsius is double temp && temp > 0)
         {
-            risk += 20;
-            findings.Add($"Temperature is high ({h.TemperatureCelsius:0.#} C).");
-            recommendations.Add("Improve cooling/airflow; sustained high temperature accelerates wear.");
-        }
-        else if (h.TemperatureCelsius >= 65)
-        {
-            risk += 8;
-            findings.Add($"Temperature is elevated ({h.TemperatureCelsius:0.#} C).");
+            if (temp >= 75)
+            {
+                risk += 20;
+                findings.Add($"Temperature is high ({temp:0.#} C).");
+                recommendations.Add("Improve cooling/airflow; sustained high temperature accelerates wear.");
+            }
+            else if (temp >= 65)
+            {
+                risk += 8;
+                findings.Add($"Temperature is elevated ({temp:0.#} C).");
+            }
         }
 
-        // Reliability counters.
-        if (h.MediaErrors > 0)
+        // Error counters.
+        if (h.MediaErrors is ulong media && media > 0)
         {
             risk += 15;
-            findings.Add($"{h.MediaErrors} media/data-integrity error(s) recorded.");
+            findings.Add($"{media} media/data-integrity error(s) recorded.");
             recommendations.Add("Run a full backup and verify data integrity.");
         }
 
-        if (h.UnsafeShutdowns > 0)
+        var readErr = h.ReadErrorsTotal ?? 0;
+        var writeErr = h.WriteErrorsTotal ?? 0;
+        if (readErr + writeErr > 0)
         {
-            findings.Add($"{h.UnsafeShutdowns} unsafe shutdown(s) recorded.");
+            risk += 10;
+            findings.Add($"Reliability counters report {readErr} read and {writeErr} write error(s).");
         }
+
+        if (h.UnsafeShutdowns is ulong unsafeShutdowns && unsafeShutdowns > 0)
+            findings.Add($"{unsafeShutdowns} unsafe shutdown(s) recorded.");
 
         risk = Math.Clamp(risk, 0, 100);
 
@@ -77,11 +112,15 @@ public sealed class RuleBasedHealthAnalyzer : IHealthAnalyzer
             >= 70 => HealthLevel.Critical,
             >= 40 => HealthLevel.Warning,
             >= 15 => HealthLevel.Watch,
-            _ => HealthLevel.Good,
+            _ => h.HasAnyData ? HealthLevel.Good : HealthLevel.Unknown,
         };
 
         if (findings.Count == 0)
-            findings.Add("No concerning indicators. Temperature, wear, spare area and error counters are within normal ranges.");
+        {
+            findings.Add(h.HasAnyData
+                ? "No concerning indicators. The metrics this drive exposes are within normal ranges."
+                : "Limited health data is available for this drive type.");
+        }
 
         var summary = level switch
         {
@@ -89,7 +128,7 @@ public sealed class RuleBasedHealthAnalyzer : IHealthAnalyzer
             HealthLevel.Watch => "Generally healthy, but a few indicators are worth keeping an eye on.",
             HealthLevel.Warning => "Degraded. One or more health indicators need attention.",
             HealthLevel.Critical => "Critical. Back up now and plan replacement.",
-            _ => "Unknown.",
+            _ => "Unknown. This drive exposes little or no health telemetry.",
         };
 
         return new HealthAssessment

@@ -15,7 +15,12 @@ public sealed class LiveHardwareFixture
 {
     public IReadOnlyList<PhysicalDiskInfo> Disks { get; }
     public PhysicalDiskInfo? Nvme { get; }
-    public NvmeHealth? NvmeHealth { get; }
+
+    /// <summary>Unified health for the NVMe device (may be null if not elevated / unsupported).</summary>
+    public DriveHealthInfo? NvmeHealth { get; }
+
+    /// <summary>Unified health read for EVERY physical disk, keyed by disk number.</summary>
+    public IReadOnlyDictionary<int, DriveHealthInfo?> HealthByDisk { get; }
 
     public LiveHardwareFixture()
     {
@@ -23,11 +28,14 @@ public sealed class LiveHardwareFixture
         Disks = diskService.GetDisksAsync().GetAwaiter().GetResult();
         Nvme = Disks.FirstOrDefault(d => d.IsNvme);
 
+        var healthService = new WindowsHealthService();
+        var map = new Dictionary<int, DriveHealthInfo?>();
+        foreach (var d in Disks)
+            map[d.Number] = healthService.ReadHealthAsync(d).GetAwaiter().GetResult();
+        HealthByDisk = map;
+
         if (Nvme is not null)
-        {
-            var healthService = new WindowsHealthService();
-            NvmeHealth = healthService.ReadHealthAsync(Nvme).GetAwaiter().GetResult();
-        }
+            NvmeHealth = HealthByDisk[Nvme.Number];
     }
 }
 
@@ -79,10 +87,11 @@ public sealed class NvmeHealthLiveTests
     {
         Assert.NotNull(_fx.NvmeHealth);
         var h = _fx.NvmeHealth!;
-        Assert.InRange(h.TemperatureCelsius, 0, 120);
-        Assert.InRange(h.AvailableSpare, 0, 100);
-        Assert.True(h.PercentageUsed >= 0);
-        Assert.True(h.PowerOnHours < 1_000_000);
+        Assert.Equal("NVMe SMART (log 0x02)", h.Source);
+        Assert.InRange(h.TemperatureCelsius ?? 0, 0, 120);
+        Assert.InRange(h.AvailableSpare ?? 0, 0, 100);
+        Assert.True((h.PercentageUsed ?? 0) >= 0);
+        Assert.True((h.PowerOnHours ?? 0) < 1_000_000);
     }
 
     [Fact]
@@ -95,6 +104,58 @@ public sealed class NvmeHealthLiveTests
         Assert.True(Enum.IsDefined(typeof(HealthLevel), assessment.Level));
         Assert.NotEmpty(assessment.Findings);
         Assert.False(string.IsNullOrWhiteSpace(assessment.Summary));
+    }
+}
+
+[Collection("live-hardware")]
+public sealed class MultiDriveHealthLiveTests
+{
+    private readonly LiveHardwareFixture _fx;
+    public MultiDriveHealthLiveTests(LiveHardwareFixture fx) => _fx = fx;
+
+    [Fact]
+    public void Health_Is_Attempted_For_Every_Physical_Disk()
+    {
+        // Every discovered disk has an entry (value may be null if the device exposes no data).
+        foreach (var d in _fx.Disks)
+            Assert.True(_fx.HealthByDisk.ContainsKey(d.Number));
+    }
+
+    [Fact]
+    public void At_Least_One_NonNvme_Or_Nvme_Reports_Real_Health()
+    {
+        // The whole point of cross-drive support: at least one drive yields usable health data.
+        var withData = _fx.HealthByDisk.Values.Where(h => h is not null && h.HasAnyData).ToList();
+        Assert.NotEmpty(withData);
+    }
+
+    [Fact]
+    public void Analyzer_Runs_Cleanly_On_Every_Available_Drive_Health()
+    {
+        var analyzer = new RuleBasedHealthAnalyzer();
+        foreach (var (number, health) in _fx.HealthByDisk)
+        {
+            if (health is null)
+                continue;
+
+            var a = analyzer.Assess(health);
+            Assert.InRange(a.RiskScore, 0, 100);
+            Assert.True(Enum.IsDefined(typeof(HealthLevel), a.Level),
+                $"Disk {number} produced an undefined health level.");
+            Assert.NotEmpty(a.Findings);
+            Assert.False(string.IsNullOrWhiteSpace(a.Summary));
+        }
+    }
+
+    [Fact]
+    public void Every_Health_Record_Declares_Its_Source()
+    {
+        foreach (var health in _fx.HealthByDisk.Values)
+        {
+            if (health is null)
+                continue;
+            Assert.False(string.IsNullOrWhiteSpace(health.Source));
+        }
     }
 }
 

@@ -10,6 +10,18 @@ public sealed class WindowsHealthService : IHealthService
 {
     public bool IsSupported => OperatingSystem.IsWindows();
 
-    public Task<NvmeHealth?> ReadHealthAsync(PhysicalDiskInfo disk, CancellationToken ct = default)
-        => Task.Run(() => NvmeHealthReader.TryRead(disk.Number), ct);
+    public Task<DriveHealthInfo?> ReadHealthAsync(PhysicalDiskInfo disk, CancellationToken ct = default)
+        => Task.Run<DriveHealthInfo?>(() =>
+        {
+            // NVMe: rich SMART health log page.
+            if (disk.IsNvme)
+            {
+                var nvme = NvmeHealthReader.TryRead(disk.Number);
+                if (nvme is not null)
+                    return DriveHealthInfo.FromNvme(nvme);
+            }
+
+            // Everything else (SATA / USB / RAID): OS reliability counters + predict-failure.
+            return GenericHealthReader.Read(disk);
+        }, ct);
 }

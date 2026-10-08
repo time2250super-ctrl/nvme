@@ -3,15 +3,16 @@ using DriveManager.Core.Models;
 namespace DriveManager.Core.Abstractions;
 
 /// <summary>
-/// Reads NVMe SMART / health telemetry from a physical disk.
+/// Reads health telemetry from a physical disk. NVMe drives return rich SMART data; other
+/// drives (SATA/USB) return whatever the OS exposes, unified into <see cref="DriveHealthInfo"/>.
 /// </summary>
 public interface IHealthService
 {
     /// <summary>
-    /// Returns the current health snapshot, or null if the device does not expose
-    /// NVMe health data or access was denied.
+    /// Returns the current health snapshot, or null if no health data is available for the device
+    /// (or access was denied / elevation required).
     /// </summary>
-    Task<NvmeHealth?> ReadHealthAsync(PhysicalDiskInfo disk, CancellationToken ct = default);
+    Task<DriveHealthInfo?> ReadHealthAsync(PhysicalDiskInfo disk, CancellationToken ct = default);
 
     bool IsSupported { get; }
 }

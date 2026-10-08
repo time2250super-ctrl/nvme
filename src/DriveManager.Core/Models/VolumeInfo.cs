@@ -17,4 +17,5 @@ public sealed record VolumeInfo
     public double UsedGb => Math.Round(UsedBytes / 1024d / 1024d / 1024d, 2);
 
     public double UsedPercent => SizeBytes == 0 ? 0 : Math.Round(UsedBytes * 100d / SizeBytes, 1);
+    public double FreePercent => SizeBytes == 0 ? 0 : Math.Round(FreeBytes * 100d / SizeBytes, 1);
 }

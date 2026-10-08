@@ -20,42 +20,48 @@ foreach (var d in disks)
         Console.WriteLine($"        -> {v.DriveLetter}: \"{v.Label}\" {v.FileSystem}  {v.UsedGb}/{v.SizeGb} GB used");
 }
 
-var nvme = disks.FirstOrDefault(d => d.IsNvme);
-if (nvme is null)
+Console.WriteLine($"\nReading health for ALL {disks.Count} disk(s)...");
+foreach (var disk in disks)
 {
-    Console.WriteLine("\nNo NVMe disk detected; skipping health read.");
-    return;
-}
+    Console.WriteLine($"\n--- Disk {disk.Number}: {disk.FriendlyName}  (Bus={disk.BusType}, NVMe={disk.IsNvme}) ---");
+    var health = await healthService.ReadHealthAsync(disk);
+    if (health is null)
+    {
+        Console.WriteLine("  No health data available (needs Administrator, or device exposes no diagnostics).");
+        continue;
+    }
 
-Console.WriteLine($"\nReading NVMe SMART/health from Disk {nvme.Number} ({nvme.FriendlyName})...");
-var health = await healthService.ReadHealthAsync(nvme);
-if (health is null)
-{
-    Console.WriteLine("  Health read returned NULL (needs Administrator, or device does not expose NVMe health).");
-    return;
-}
+    Console.WriteLine($"  Source             : {health.Source}");
+    Console.WriteLine($"  Health status      : {health.HealthStatus ?? "(n/a)"}");
+    Console.WriteLine($"  Failure predicted  : {FmtBool(health.PredictFailure)}");
+    Console.WriteLine($"  Temperature        : {Fmt(health.TemperatureCelsius)} C");
+    Console.WriteLine($"  Life used          : {Fmt(health.PercentageUsed)} %");
+    Console.WriteLine($"  Available spare    : {Fmt(health.AvailableSpare)} % (threshold {Fmt(health.AvailableSpareThreshold)} %)");
+    Console.WriteLine($"  Data written       : {Fmt(health.TerabytesWritten)} TB");
+    Console.WriteLine($"  Data read          : {Fmt(health.TerabytesRead)} TB");
+    Console.WriteLine($"  Power-on hours     : {Fmt(health.PowerOnHours)}");
+    Console.WriteLine($"  Power cycles       : {Fmt(health.PowerCycles)}");
+    Console.WriteLine($"  Unsafe shutdowns   : {Fmt(health.UnsafeShutdowns)}");
+    Console.WriteLine($"  Media errors       : {Fmt(health.MediaErrors)}");
+    Console.WriteLine($"  Read errors        : {Fmt(health.ReadErrorsTotal)}");
+    Console.WriteLine($"  Write errors       : {Fmt(health.WriteErrorsTotal)}");
+    if (health.CriticalWarning is byte cw)
+        Console.WriteLine($"  Critical warning   : 0x{cw:X2}");
 
-Console.WriteLine($"  Temperature        : {health.TemperatureCelsius} C");
-Console.WriteLine($"  Life used          : {health.PercentageUsed} %");
-Console.WriteLine($"  Available spare    : {health.AvailableSpare} % (threshold {health.AvailableSpareThreshold} %)");
-Console.WriteLine($"  Data written       : {health.TerabytesWritten} TB");
-Console.WriteLine($"  Data read          : {health.TerabytesRead} TB");
-Console.WriteLine($"  Power-on hours     : {health.PowerOnHours}");
-Console.WriteLine($"  Power cycles       : {health.PowerCycles}");
-Console.WriteLine($"  Unsafe shutdowns   : {health.UnsafeShutdowns}");
-Console.WriteLine($"  Media errors       : {health.MediaErrors}");
-Console.WriteLine($"  Critical warning   : 0x{health.CriticalWarning:X2}");
-
-var assessment = analyzer.Assess(health);
-Console.WriteLine($"\nAI assessment: {assessment.Level} (risk {assessment.RiskScore}/100)");
-Console.WriteLine($"  {assessment.Summary}");
-foreach (var f in assessment.Findings)
-    Console.WriteLine($"  - {f}");
-if (assessment.Recommendations.Count > 0)
-{
-    Console.WriteLine("  Recommendations:");
-    foreach (var r in assessment.Recommendations)
-        Console.WriteLine($"    * {r}");
+    var assessment = analyzer.Assess(health);
+    Console.WriteLine($"  AI assessment      : {assessment.Level} (risk {assessment.RiskScore}/100)");
+    Console.WriteLine($"    {assessment.Summary}");
+    foreach (var f in assessment.Findings)
+        Console.WriteLine($"    - {f}");
+    if (assessment.Recommendations.Count > 0)
+    {
+        Console.WriteLine("    Recommendations:");
+        foreach (var r in assessment.Recommendations)
+            Console.WriteLine($"      * {r}");
+    }
 }
 
 Console.WriteLine("\n=== Probe complete ===");
+
+static string Fmt(object? v) => v?.ToString() ?? "(n/a)";
+static string FmtBool(bool? v) => v is null ? "(n/a)" : (v.Value ? "YES" : "no");
