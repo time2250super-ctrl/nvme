@@ -209,6 +209,29 @@
                         </StackPanel>
                     </Border>
 
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Disk partitioning" FontSize="15" FontWeight="Bold" />
+                            <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="12"
+                                       Text="Wipes the selected disk and creates two GPT partitions (app + data). Blocked on system/boot disks. Requires Administrator." />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="First partition (GB):" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                <TextBox Width="80" Text="{Binding PartitionFirstSizeGb}" />
+                                <TextBlock Text="File system:" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                <ComboBox MinWidth="100" ItemsSource="{Binding FileSystemOptions}"
+                                          SelectedItem="{Binding SelectedFileSystem}" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="App label:" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                <TextBox Width="120" Text="{Binding PartitionAppLabel}" />
+                                <TextBlock Text="Data label:" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                <TextBox Width="120" Text="{Binding PartitionDataLabel}" />
+                            </StackPanel>
+                            <Button Content="Repartition disk (2 partitions)" Classes="accent" HorizontalAlignment="Left"
+                                    Command="{Binding PartitionDiskCommand}" IsEnabled="{Binding !IsBusy}" />
+                        </StackPanel>
+                    </Border>
+
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>
@@ -358,7 +381,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="Destructive Tools" FontSize="15" FontWeight="Bold" Foreground="#E51A1A" />
                                         <TextBlock TextWrapping="Wrap" Opacity="0.85" FontSize="12"
-                                                   Text="These operations erase data immediately and cannot be undone." />
+                                                   Text="These operations erase data and cannot be undone. You must click OK in the confirmation dialog before anything runs." />
 
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="File system:" VerticalAlignment="Center" FontWeight="SemiBold" />

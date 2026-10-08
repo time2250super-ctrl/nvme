@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 
 namespace DriveManager.Platform.Windows.Native;
@@ -11,6 +12,8 @@ internal static class DestructiveExecutor
 {
     public static async Task ExecuteAsync(OperationPreview preview, CancellationToken ct)
     {
+        BootDriveGuard.RequireDestructiveAllowed(preview.TargetDisk);
+
         var commands = preview.Steps
             .Where(s => !string.IsNullOrWhiteSpace(s) && !s.TrimStart().StartsWith('#'))
             .ToList();

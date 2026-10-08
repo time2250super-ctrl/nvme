@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 using DriveManager.Core.Abstractions;
+using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 
 namespace DriveManager.Platform.Windows;
@@ -112,6 +113,9 @@ public sealed class WindowsDriveToolsService : IDriveToolsService
 
     public async Task ExecuteAsync(DriveOperation op, CancellationToken ct = default)
     {
+        if (BootDriveGuard.BlockRiskyToolReason(op.Disk, op.Kind) is { } reason)
+            throw new InvalidOperationException(reason);
+
         var command = BuildCommand(op);
         await RunPowerShellAsync(command, ct).ConfigureAwait(false);
     }

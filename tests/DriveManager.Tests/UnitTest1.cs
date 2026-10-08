@@ -1,5 +1,7 @@
 ﻿using System.IO;
 using DriveManager.Ai;
+using DriveManager.Core.Abstractions;
+using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 using DriveManager.Core.Telemetry;
 using DriveManager.Platform.Windows;
@@ -217,5 +219,31 @@ public sealed class DriveToolsLiveTests
         var op = svc.BuildSetDiskOffline(disk, offline: true);
         Assert.Equal(DriveOperationKind.SetDiskOffline, op.Kind);
         Assert.Contains(op.Preview.Steps, s => s.Contains("Set-Disk") && s.Contains("IsOffline"));
+    }
+
+    [Fact]
+    public void System_Disk_Is_Blocked_From_Destructive_And_Offline()
+    {
+        var sys = _fx.Disks.First(d => d.IsSystem);
+        Assert.NotNull(BootDriveGuard.BlockDestructiveReason(sys));
+        Assert.NotNull(BootDriveGuard.BlockRiskyToolReason(sys, DriveOperationKind.SetDiskOffline));
+    }
+
+    [Fact]
+    public void Two_Partition_Plan_Uses_diskpart_clean_gpt_and_sizes()
+    {
+        var disk = _fx.Disks.FirstOrDefault(d => !d.IsSystem && !d.IsBoot);
+        if (disk is null) return;
+
+        const long fiveGb = 5L * 1024 * 1024 * 1024;
+        var remaining = disk.SizeBytes - fiveGb;
+        var plan = new WindowsFormatService().PreviewRepartition(
+            disk, [fiveGb, remaining], FileSystemType.Ntfs, ["DriveMgr", "Data"]);
+
+        Assert.Equal(ExecutionRunner.Diskpart, plan.Runner);
+        Assert.Contains(plan.Steps, s => s.Contains("online disk", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(plan.Steps, s => s.Contains("create partition primary size=5120", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(plan.Steps, s => s.Contains("create partition primary") && !s.Contains("size="));
+        Assert.Contains(plan.Steps, s => s.Contains("label=DriveMgr", StringComparison.OrdinalIgnoreCase));
     }
 }

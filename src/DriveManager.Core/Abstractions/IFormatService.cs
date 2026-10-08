@@ -18,7 +18,11 @@ public interface IFormatService
     OperationPreview PreviewQuickFormat(PhysicalDiskInfo disk, char driveLetter, FileSystemType fileSystem, string label);
 
     /// <summary>Build wiping a disk and creating one or more partitions.</summary>
-    OperationPreview PreviewRepartition(PhysicalDiskInfo disk, IReadOnlyList<long> partitionSizesBytes, FileSystemType fileSystem);
+    OperationPreview PreviewRepartition(
+        PhysicalDiskInfo disk,
+        IReadOnlyList<long> partitionSizesBytes,
+        FileSystemType fileSystem,
+        IReadOnlyList<string>? volumeLabels = null);
 
     /// <summary>Run the command plan immediately.</summary>
     Task ExecuteAsync(OperationPreview preview, CancellationToken ct = default);

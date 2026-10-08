@@ -3,10 +3,12 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DriveManager.Ai;
 using DriveManager.Core.Abstractions;
+using DriveManager.Core.Guards;
 using DriveManager.Core.Models;
 using DriveManager.Core.Telemetry;
 
@@ -59,6 +61,15 @@ public partial class DashboardViewModel : ViewModelBase
 
     [ObservableProperty]
     private string _toolsStatus = "Select a volume, then run an action.";
+
+    [ObservableProperty]
+    private string _partitionFirstSizeGb = "5";
+
+    [ObservableProperty]
+    private string _partitionAppLabel = "DriveMgr";
+
+    [ObservableProperty]
+    private string _partitionDataLabel = "Data";
 
     // --- Danger zone (destructive) ---
     [ObservableProperty]
@@ -127,8 +138,46 @@ public partial class DashboardViewModel : ViewModelBase
 
     public event Action<string, string>? PopupRequested;
 
+    /// <summary>Title + message; return true if the user clicked OK.</summary>
+    public event Func<string, string, Task<bool>>? ConfirmRequested;
+
     private void ShowPopup(string title, string body)
         => PopupRequested?.Invoke(title, body);
+
+    private async Task<bool> ConfirmPlanAsync(OperationPreview plan)
+    {
+        var title = plan.IsDestructive ? "Confirm destructive action" : "Confirm action";
+        var body = FormatConfirmMessage(plan);
+        if (ConfirmRequested is null)
+            return true;
+
+        if (Dispatcher.UIThread.CheckAccess())
+            return await ConfirmRequested(title, body);
+
+        return await Dispatcher.UIThread.InvokeAsync(async () => await ConfirmRequested(title, body));
+    }
+
+    private static string FormatConfirmMessage(OperationPreview plan)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(plan.Title);
+        sb.AppendLine();
+        sb.AppendLine(plan.Description);
+        if (plan.Warnings.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var w in plan.Warnings)
+                sb.AppendLine("• " + w);
+        }
+        if (plan.TargetDisk is { } disk && BootDriveGuard.IsProtected(disk))
+        {
+            sb.AppendLine();
+            sb.AppendLine("BLOCKED: system/boot disk — this will not run.");
+        }
+        sb.AppendLine();
+        sb.Append("Click OK to run now, or Cancel.");
+        return sb.ToString();
+    }
 
     public DashboardViewModel(
         IHealthAnalyzer analyzer,
@@ -399,9 +448,58 @@ public partial class DashboardViewModel : ViewModelBase
         await RunToolAsync(_tools.BuildSetDiskOffline(SelectedDisk, offline: false));
     }
 
+    [RelayCommand]
+    private async Task PartitionDiskAsync()
+    {
+        if (SelectedDisk is null || _formatService is null)
+        {
+            ToolsStatus = "Select a disk first.";
+            return;
+        }
+
+        if (!double.TryParse(PartitionFirstSizeGb?.Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var firstGb) || firstGb <= 0)
+        {
+            ToolsStatus = "Enter a valid first partition size in GB (e.g. 5).";
+            return;
+        }
+
+        var firstBytes = (long)(firstGb * 1024 * 1024 * 1024);
+        if (firstBytes >= SelectedDisk.SizeBytes)
+        {
+            ToolsStatus = "First partition must be smaller than the whole disk.";
+            return;
+        }
+
+        var remaining = SelectedDisk.SizeBytes - firstBytes;
+        try
+        {
+            var plan = _formatService.PreviewRepartition(
+                SelectedDisk,
+                [firstBytes, remaining],
+                ParseFileSystem(),
+                [PartitionAppLabel ?? "DriveMgr", PartitionDataLabel ?? "Data"]);
+            await RunDiskPlanAsync(plan, p => _formatService.ExecuteAsync(p), msg => ToolsStatus = msg);
+        }
+        catch (Exception ex)
+        {
+            ToolsStatus = ex.Message;
+        }
+    }
+
     private async Task RunToolAsync(DriveOperation op)
     {
         if (_tools is null) return;
+        if (BootDriveGuard.BlockRiskyToolReason(op.Disk, op.Kind) is { } block)
+        {
+            ToolsStatus = block;
+            return;
+        }
+        if (!await ConfirmPlanAsync(op.Preview))
+        {
+            ToolsStatus = "Cancelled.";
+            return;
+        }
         try
         {
             IsBusy = true;
@@ -464,19 +562,33 @@ public partial class DashboardViewModel : ViewModelBase
         await RunDestructiveAsync(plan, p => _securityService.ExecuteAsync(p));
     }
 
-    private async Task RunDestructiveAsync(OperationPreview plan, Func<OperationPreview, Task> exec)
+    private Task RunDestructiveAsync(OperationPreview plan, Func<OperationPreview, Task> exec)
+        => RunDiskPlanAsync(plan, exec, msg => DangerStatus = msg);
+
+    private async Task RunDiskPlanAsync(OperationPreview plan, Func<OperationPreview, Task> exec, Action<string> setStatus)
     {
+        if (BootDriveGuard.BlockDestructiveReason(plan.TargetDisk) is { } block)
+        {
+            setStatus(block);
+            return;
+        }
+        if (!await ConfirmPlanAsync(plan))
+        {
+            setStatus("Cancelled.");
+            return;
+        }
         try
         {
             IsBusy = true;
-            DangerStatus = $"Running: {plan.Title}...";
+            setStatus($"Running: {plan.Title}...");
             await exec(plan);
-            DangerStatus = $"Done: {plan.Title}.";
+            setStatus($"Done: {plan.Title}. Rescanning...");
             await RefreshAsync();
+            setStatus($"Done: {plan.Title}.");
         }
         catch (Exception ex)
         {
-            DangerStatus = "Failed: " + ex.Message;
+            setStatus("Failed: " + ex.Message);
         }
         finally
         {
@@ -505,6 +617,11 @@ public partial class DashboardViewModel : ViewModelBase
     private async Task RunEncryptionAsync(OperationPreview plan)
     {
         if (_securityService is null) return;
+        if (!await ConfirmPlanAsync(plan))
+        {
+            EncStatus = "Cancelled.";
+            return;
+        }
         try
         {
             IsBusy = true;

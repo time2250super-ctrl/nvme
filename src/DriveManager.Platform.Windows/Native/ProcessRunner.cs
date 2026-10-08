@@ -55,7 +55,7 @@ internal static class ProcessRunner
             psi.ArgumentList.Add("/s");
             psi.ArgumentList.Add(scriptPath);
 
-            await RunAsync(psi, ct).ConfigureAwait(false);
+            await RunAsync(psi, ct, TimeSpan.FromMinutes(120)).ConfigureAwait(false);
         }
         finally
         {
@@ -63,7 +63,7 @@ internal static class ProcessRunner
         }
     }
 
-    private static async Task<string> RunAsync(ProcessStartInfo psi, CancellationToken ct)
+    private static async Task<string> RunAsync(ProcessStartInfo psi, CancellationToken ct, TimeSpan? timeoutLimit = null)
     {
         using var process = new Process { StartInfo = psi };
         var stdout = new StringBuilder();
@@ -74,16 +74,17 @@ internal static class ProcessRunner
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(25));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var limit = timeoutLimit ?? TimeSpan.FromSeconds(25);
+        linkedCts.CancelAfter(limit);
         try
         {
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* ignore */ }
-            throw new TimeoutException($"{psi.FileName} timed out after 25s.");
+            throw new TimeoutException($"{psi.FileName} timed out after {limit.TotalSeconds:0}s.");
         }
 
         if (process.ExitCode != 0)
